@@ -68,6 +68,24 @@ Always use these aliases instead of relative imports.
 - **Always follow the color palette defined in `client/global.css`** - use existing theme colors
 - **Keep designs simple, cool, and engaging** - prioritize clean UX
 
+### ⚠️ MOBILE RESPONSIVENESS — MANDATORY STANDARD
+
+**Every feature, component, page, and UI change MUST be fully mobile responsive. No exceptions.**
+
+- **Design mobile-first**: start with the smallest viewport, then enhance for larger screens using Tailwind responsive prefixes (`sm:`, `md:`, `lg:`, `xl:`)
+- **Never use fixed widths** that would overflow on mobile (e.g., `w-[500px]` without a `max-w-full` or responsive override)
+- **Typography must scale**: large headings need responsive sizing (e.g., `text-2xl sm:text-4xl md:text-6xl`), never use large fixed sizes like `text-6xl` without a smaller mobile fallback
+- **Grids must stack on mobile**: always add `grid-cols-1` as base, scale up with `sm:grid-cols-2 lg:grid-cols-3`
+- **Flex layouts must wrap or stack**: use `flex-wrap` or `flex-col sm:flex-row` for horizontal groups
+- **Touch targets**: interactive elements (buttons, links) must have minimum `h-10 w-10` hit area; action buttons inside cards/rows that use `opacity-0 hover:opacity-100` must use `sm:opacity-0 sm:group-hover:opacity-100` so they remain visible on touch devices
+- **Fixed/sticky elements**: headers and sidebars must not cover content — use appropriate `top-*` offsets for sticky children
+- **Sidebars/panels**: desktop sidebars must use `hidden lg:flex` and provide a mobile drawer/sheet with a toggle button
+- **Modals/dialogs**: use `w-[calc(100vw-1rem)] sm:w-full max-w-*` to prevent edge overflow on small screens
+- **Images**: always use `w-full object-cover` inside aspect-ratio containers; never fixed `width`/`height` pixel values on images
+- **Horizontal scroll**: avoid it except in deliberate scroll containers (carousels, code blocks, toolbar strips) — use `overflow-x-auto` intentionally, not as a fallback
+- **Padding/spacing**: use `px-4 sm:px-6 lg:px-8` or the `container` class; never omit horizontal padding on mobile
+- **Test every new UI at these breakpoints**: 375px (iPhone SE), 430px (iPhone 14 Pro Max), 768px (tablet), 1280px (desktop)
+
 ## API Development
 
 ### When to Create API Endpoints

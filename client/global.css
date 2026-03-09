@@ -6,6 +6,12 @@
 @tailwind utilities;
 
 @layer base {
+  html,
+  body {
+    overflow-x: hidden;
+    max-width: 100vw;
+  }
+
   /**
    * Tailwind CSS theme
    * tailwind.config.ts expects the following color variables to be expressed as HSL values.
@@ -104,4 +110,103 @@
       transform: scaleX(1);
     }
   }
+}
+
+/* ── Tiptap / ProseMirror heading sizes ────────────────────────
+   Outside @layer so these rules win over Tailwind's preflight reset.
+   Uses rem (relative to root 16px) for predictable sizing. */
+.ProseMirror h1 {
+  font-size: 2rem !important;
+  font-weight: 700 !important;
+  line-height: 1.2;
+  margin: 0.75rem 0 0.25rem;
+}
+.ProseMirror h2 {
+  font-size: 1.5rem !important;
+  font-weight: 700 !important;
+  line-height: 1.3;
+  margin: 0.75rem 0 0.25rem;
+}
+.ProseMirror h3 {
+  font-size: 1.25rem !important;
+  font-weight: 600 !important;
+  line-height: 1.4;
+  margin: 0.75rem 0 0.25rem;
+}
+.ProseMirror h4 {
+  font-size: 1.1rem !important;
+  font-weight: 600 !important;
+  line-height: 1.4;
+  margin: 0.75rem 0 0.25rem;
+}
+
+/* ── Article rendered HTML block content ───────────────────────
+   Applied to dangerouslySetInnerHTML blocks in Article.tsx.
+   No @tailwindcss/typography needed. */
+.article-content h1 {
+  font-size: 2rem !important;
+  font-weight: 800 !important;
+  line-height: 1.2;
+  margin: 1.5rem 0 0.5rem;
+  color: hsl(var(--foreground));
+}
+.article-content h2 {
+  font-size: 1.6rem !important;
+  font-weight: 700 !important;
+  line-height: 1.25;
+  margin: 1.5rem 0 0.5rem;
+  color: hsl(var(--foreground));
+}
+.article-content h3 {
+  font-size: 1.3rem !important;
+  font-weight: 700 !important;
+  line-height: 1.3;
+  margin: 1.25rem 0 0.5rem;
+  color: hsl(var(--foreground));
+}
+.article-content h4 {
+  font-size: 1.1rem !important;
+  font-weight: 600 !important;
+  line-height: 1.4;
+  margin: 1rem 0 0.4rem;
+  color: hsl(var(--foreground));
+}
+.article-content p {
+  color: hsl(var(--muted-foreground));
+  line-height: 1.75;
+  margin: 0.75rem 0;
+}
+.article-content strong {
+  color: hsl(var(--foreground));
+  font-weight: 700;
+}
+.article-content em {
+  font-style: italic;
+}
+.article-content ul,
+.article-content ol {
+  padding-left: 1.5rem;
+  margin: 0.75rem 0;
+}
+.article-content ul {
+  list-style-type: disc;
+}
+.article-content ol {
+  list-style-type: decimal;
+}
+.article-content li {
+  color: hsl(var(--muted-foreground));
+  line-height: 1.6;
+  margin: 0.3rem 0;
+}
+.article-content blockquote {
+  border-left: 4px solid hsl(var(--primary));
+  padding-left: 1rem;
+  margin: 1rem 0;
+  font-style: italic;
+  color: hsl(var(--muted-foreground));
+}
+.article-content a {
+  color: hsl(var(--primary));
+  text-decoration: underline;
 }

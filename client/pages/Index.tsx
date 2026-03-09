@@ -51,6 +51,7 @@ export default function Index() {
   const [activeHeroIndex, setActiveHeroIndex] = useState(0);
   const [isHovering, setIsHovering] = useState(false);
   const autoRotateTimer = useRef<NodeJS.Timeout | null>(null);
+  const touchStartX = useRef<number | null>(null);
 
   useEffect(() => {
     dispatch(fetchHome());
@@ -93,134 +94,209 @@ export default function Index() {
         onMouseLeave={() => setIsHovering(false)}
       >
         {loading && heroArticles.length === 0 ? (
-          <Skeleton className="h-[650px] w-full rounded-[2rem]" />
+          <Skeleton className="h-[500px] lg:h-[650px] w-full rounded-[2rem]" />
         ) : heroArticles.length > 0 ? (
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-1 h-[800px] md:h-[600px] lg:h-[650px] overflow-hidden rounded-[2rem] border border-primary/10 shadow-2xl shadow-black/50 bg-black">
-            {/* Main Stage (Left) */}
-            <div className="lg:col-span-8 relative overflow-hidden group bg-black">
+          <>
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-1 h-auto lg:h-[650px] overflow-hidden rounded-[2rem] border border-primary/10 shadow-2xl shadow-black/50 bg-black">
+              {/* Main Stage (Left) */}
+              <div
+                className="lg:col-span-8 relative overflow-hidden group bg-black min-h-[420px] sm:min-h-[480px] lg:min-h-0"
+                onTouchStart={(e) => {
+                  touchStartX.current = e.touches[0].clientX;
+                }}
+                onTouchEnd={(e) => {
+                  if (touchStartX.current === null) return;
+                  const dx = e.changedTouches[0].clientX - touchStartX.current;
+                  if (Math.abs(dx) > 40) {
+                    if (dx < 0)
+                      setActiveHeroIndex((p) => (p + 1) % heroArticles.length);
+                    else
+                      setActiveHeroIndex(
+                        (p) =>
+                          (p - 1 + heroArticles.length) % heroArticles.length,
+                      );
+                  }
+                  touchStartX.current = null;
+                }}
+              >
+                {heroArticles.map((article, idx) => (
+                  <div
+                    key={article.id}
+                    className={cn(
+                      "absolute inset-0 transition-all duration-1000 ease-in-out",
+                      activeHeroIndex === idx
+                        ? "opacity-100 scale-100"
+                        : "opacity-0 scale-105 pointer-events-none",
+                    )}
+                  >
+                    <img
+                      src={article.image_url ?? "/placeholder.jpg"}
+                      alt={article.title}
+                      className="h-full w-full object-cover grayscale-[20%]"
+                    />
+                    <div className="absolute inset-0 bg-gradient-to-t from-black via-black/50 to-transparent" />
+                    <div className="absolute inset-0 bg-gradient-to-r from-black/60 via-transparent to-transparent" />
+
+                    {/* Content Overlay */}
+                    <div className="absolute inset-0 p-6 pb-14 sm:pb-8 sm:p-8 md:p-12 flex flex-col justify-end">
+                      <div
+                        className={cn(
+                          "max-w-2xl space-y-3 sm:space-y-4 transition-all duration-700 delay-300 transform",
+                          activeHeroIndex === idx
+                            ? "translate-y-0 opacity-100"
+                            : "translate-y-10 opacity-0",
+                        )}
+                      >
+                        <Badge className="bg-primary/90 hover:bg-primary text-xs font-black uppercase tracking-[0.2em] italic px-4 py-1 rounded-full mb-1">
+                          {article.category_name}
+                        </Badge>
+                        <Link to={`/articulo/${article.slug}`}>
+                          <h1 className="text-3xl sm:text-4xl md:text-6xl font-black italic tracking-tighter leading-[0.85] text-white uppercase drop-shadow-2xl hover:text-primary transition-colors cursor-pointer">
+                            {article.title}
+                          </h1>
+                        </Link>
+                        <p className="hidden sm:block text-white/80 text-base sm:text-lg line-clamp-2 font-medium leading-relaxed max-w-xl">
+                          {article.excerpt}
+                        </p>
+                        <div className="flex items-center gap-4 pt-2 sm:pt-4">
+                          <Link to={`/articulo/${article.slug}`}>
+                            <Button
+                              size="lg"
+                              className="rounded-full px-5 sm:px-8 font-black italic uppercase tracking-tighter group h-11 sm:h-14 text-sm sm:text-lg"
+                            >
+                              Leer más
+                              <ArrowRight className="ml-2 h-4 w-4 group-hover:translate-x-1 transition-transform" />
+                            </Button>
+                          </Link>
+                          <div className="flex items-center gap-1.5 text-white/50 text-xs sm:text-sm font-bold uppercase tracking-widest">
+                            <Clock className="h-3.5 w-3.5" />
+                            {article.read_time_minutes} min
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+
+                {/* Mobile dot indicators */}
+                <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex gap-1.5 lg:hidden z-10">
+                  {heroArticles.map((_, idx) => (
+                    <button
+                      key={idx}
+                      onClick={() => setActiveHeroIndex(idx)}
+                      className={cn(
+                        "h-1.5 rounded-full transition-all duration-300",
+                        activeHeroIndex === idx
+                          ? "w-6 bg-primary"
+                          : "w-1.5 bg-white/40 hover:bg-white/70",
+                      )}
+                    />
+                  ))}
+                </div>
+              </div>
+
+              {/* Index (Right) */}
+              <div className="hidden lg:flex lg:col-span-4 bg-muted/30 flex-col divide-y divide-primary/5">
+                {heroArticles.map((article, idx) => (
+                  <button
+                    key={article.id}
+                    onClick={() => setActiveHeroIndex(idx)}
+                    onMouseEnter={() => setActiveHeroIndex(idx)}
+                    className={cn(
+                      "flex-1 flex items-center gap-4 px-6 text-left transition-all relative group overflow-hidden",
+                      activeHeroIndex === idx
+                        ? "bg-primary text-primary-foreground"
+                        : "hover:bg-primary/5 text-muted-foreground",
+                    )}
+                  >
+                    {/* Progress Bar Background */}
+                    {activeHeroIndex === idx && !isHovering && (
+                      <div
+                        className="absolute bottom-0 left-0 right-0 h-1 bg-white/20 origin-left"
+                        style={{
+                          animation: "progress 5s linear forwards",
+                        }}
+                      />
+                    )}
+
+                    <span
+                      className={cn(
+                        "text-2xl font-black italic tracking-tighter transition-colors",
+                        activeHeroIndex === idx
+                          ? "text-primary-foreground/20"
+                          : "text-muted-foreground/10",
+                      )}
+                    >
+                      {String(idx + 1).padStart(2, "0")}
+                    </span>
+
+                    <div className="flex-1 min-w-0 py-4">
+                      <div
+                        className={cn(
+                          "text-[10px] font-black uppercase tracking-[0.2em] mb-1 italic",
+                          activeHeroIndex === idx
+                            ? "text-primary-foreground/70"
+                            : "text-primary",
+                        )}
+                      >
+                        {article.subcategory_name}
+                      </div>
+                      <h3
+                        className={cn(
+                          "font-bold uppercase tracking-tighter leading-none text-sm md:text-base line-clamp-2 transition-transform duration-300",
+                          activeHeroIndex === idx
+                            ? "translate-x-1"
+                            : "group-hover:translate-x-1",
+                        )}
+                      >
+                        {article.title}
+                      </h3>
+                    </div>
+
+                    {activeHeroIndex === idx && (
+                      <Play className="h-4 w-4 fill-current" />
+                    )}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Mobile thumbnail strip */}
+            <div className="lg:hidden flex gap-2.5 overflow-x-auto pb-1 pt-3 snap-x snap-mandatory [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
               {heroArticles.map((article, idx) => (
-                <div
+                <button
                   key={article.id}
+                  onClick={() => setActiveHeroIndex(idx)}
                   className={cn(
-                    "absolute inset-0 transition-all duration-1000 ease-in-out",
+                    "flex-none w-[130px] snap-start relative overflow-hidden rounded-xl aspect-[4/3] bg-black border-2 transition-all duration-300 shrink-0",
                     activeHeroIndex === idx
-                      ? "opacity-100 scale-100"
-                      : "opacity-0 scale-105 pointer-events-none",
+                      ? "border-primary shadow-lg shadow-primary/30"
+                      : "border-transparent opacity-60",
                   )}
                 >
                   <img
                     src={article.image_url ?? "/placeholder.jpg"}
                     alt={article.title}
-                    className="h-full w-full object-cover grayscale-[20%]"
+                    className="w-full h-full object-cover"
                   />
-                  <div className="absolute inset-0 bg-gradient-to-t from-black via-black/40 to-transparent" />
-                  <div className="absolute inset-0 bg-gradient-to-r from-black/60 via-transparent to-transparent" />
-
-                  {/* Content Overlay */}
-                  <div className="absolute inset-0 p-8 md:p-12 flex flex-col justify-end">
-                    <div
-                      className={cn(
-                        "max-w-2xl space-y-4 transition-all duration-700 delay-300 transform",
-                        activeHeroIndex === idx
-                          ? "translate-y-0 opacity-100"
-                          : "translate-y-10 opacity-0",
-                      )}
-                    >
-                      <Badge className="bg-primary/90 hover:bg-primary text-xs font-black uppercase tracking-[0.2em] italic px-4 py-1 rounded-full mb-2">
-                        {article.category_name}
-                      </Badge>
-                      <h1 className="text-4xl md:text-6xl font-black italic tracking-tighter leading-[0.85] text-white uppercase drop-shadow-2xl">
-                        {article.title}
-                      </h1>
-                      <p className="text-white/80 text-lg line-clamp-2 font-medium leading-relaxed max-w-xl">
-                        {article.excerpt}
-                      </p>
-                      <div className="flex items-center gap-6 pt-4">
-                        <Link to={`/article/${article.slug}`}>
-                          <Button
-                            size="lg"
-                            className="rounded-full px-8 font-black italic uppercase tracking-tighter group h-14 text-lg"
-                          >
-                            Leer más
-                            <ArrowRight className="ml-2 h-5 w-5 group-hover:translate-x-1 transition-transform" />
-                          </Button>
-                        </Link>
-                        <div className="flex items-center gap-2 text-white/50 text-sm font-bold uppercase tracking-widest">
-                          <Clock className="h-4 w-4" />
-                          {article.read_time_minutes} min
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            {/* Index (Right) */}
-            <div className="lg:col-span-4 bg-muted/30 flex flex-col divide-y divide-primary/5">
-              {heroArticles.map((article, idx) => (
-                <button
-                  key={article.id}
-                  onClick={() => setActiveHeroIndex(idx)}
-                  onMouseEnter={() => setActiveHeroIndex(idx)}
-                  className={cn(
-                    "flex-1 flex items-center gap-4 px-6 text-left transition-all relative group overflow-hidden",
-                    activeHeroIndex === idx
-                      ? "bg-primary text-primary-foreground"
-                      : "hover:bg-primary/5 text-muted-foreground",
-                  )}
-                >
-                  {/* Progress Bar Background */}
-                  {activeHeroIndex === idx && !isHovering && (
-                    <div
-                      className="absolute bottom-0 left-0 right-0 h-1 bg-white/20 origin-left"
-                      style={{
-                        animation: "progress 5s linear forwards",
-                      }}
-                    />
-                  )}
-
-                  <span
-                    className={cn(
-                      "text-2xl font-black italic tracking-tighter transition-colors",
-                      activeHeroIndex === idx
-                        ? "text-primary-foreground/20"
-                        : "text-muted-foreground/10",
-                    )}
-                  >
-                    {String(idx + 1).padStart(2, "0")}
-                  </span>
-
-                  <div className="flex-1 min-w-0 py-4">
-                    <div
-                      className={cn(
-                        "text-[10px] font-black uppercase tracking-[0.2em] mb-1 italic",
-                        activeHeroIndex === idx
-                          ? "text-primary-foreground/70"
-                          : "text-primary",
-                      )}
-                    >
-                      {article.subcategory_name}
-                    </div>
-                    <h3
-                      className={cn(
-                        "font-bold uppercase tracking-tighter leading-none text-sm md:text-base line-clamp-2 transition-transform duration-300",
-                        activeHeroIndex === idx
-                          ? "translate-x-1"
-                          : "group-hover:translate-x-1",
-                      )}
-                    >
+                  <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/20 to-transparent" />
+                  <div className="absolute bottom-0 left-0 right-0 p-2">
+                    <p className="text-[9px] font-black uppercase tracking-widest text-primary leading-none mb-0.5">
+                      {article.category_name}
+                    </p>
+                    <p className="text-white text-[10px] font-black uppercase leading-tight line-clamp-2">
                       {article.title}
-                    </h3>
+                    </p>
                   </div>
-
                   {activeHeroIndex === idx && (
-                    <Play className="h-4 w-4 fill-current" />
+                    <div className="absolute top-1.5 right-1.5 w-4 h-4 rounded-full bg-primary flex items-center justify-center">
+                      <Play className="h-2 w-2 fill-white text-white" />
+                    </div>
                   )}
                 </button>
               ))}
             </div>
-          </div>
+          </>
         ) : null}
       </section>
 
@@ -274,7 +350,7 @@ export default function Index() {
                 <h2 className="text-3xl font-black italic tracking-tighter uppercase">
                   Tecnología
                 </h2>
-                <Link to="/category/technology">
+                <Link to="/categoria/technology">
                   <Button variant="ghost" className="group">
                     Explorar{" "}
                     <ChevronRight className="ml-1 h-4 w-4 group-hover:translate-x-1 transition-transform" />
@@ -296,7 +372,7 @@ export default function Index() {
                 <h2 className="text-3xl font-black italic tracking-tighter uppercase">
                   Videojuegos
                 </h2>
-                <Link to="/category/video-games">
+                <Link to="/categoria/video-games">
                   <Button variant="ghost" className="group">
                     Entrar al Lobby{" "}
                     <ChevronRight className="ml-1 h-4 w-4 group-hover:translate-x-1 transition-transform" />
@@ -307,7 +383,7 @@ export default function Index() {
                 {gamingArticles.slice(0, 2).map((article) => (
                   <Link
                     key={article.id}
-                    to={`/article/${article.slug}`}
+                    to={`/articulo/${article.slug}`}
                     className="group relative overflow-hidden rounded-3xl aspect-[16/10] bg-black"
                   >
                     <img
@@ -337,7 +413,7 @@ export default function Index() {
                 <h2 className="text-3xl font-black italic tracking-tighter uppercase">
                   Cine & Series
                 </h2>
-                <Link to="/category/cinema">
+                <Link to="/categoria/cinema">
                   <Button variant="ghost" className="group">
                     Ver cartelera{" "}
                     <ChevronRight className="ml-1 h-4 w-4 group-hover:translate-x-1 transition-transform" />
@@ -348,7 +424,7 @@ export default function Index() {
                 {cinemaArticles.slice(0, 1).map((article) => (
                   <Link
                     key={article.id}
-                    to={`/article/${article.slug}`}
+                    to={`/articulo/${article.slug}`}
                     className="block h-full"
                   >
                     <img
@@ -384,7 +460,7 @@ export default function Index() {
                 <h2 className="text-3xl font-black italic tracking-tighter uppercase">
                   Mundo & Ciencia
                 </h2>
-                <Link to="/category/world-news">
+                <Link to="/categoria/world-news">
                   <Button variant="ghost" className="group">
                     Global News{" "}
                     <ChevronRight className="ml-1 h-4 w-4 group-hover:translate-x-1 transition-transform" />
@@ -395,7 +471,7 @@ export default function Index() {
                 {mundoArticles.slice(0, 3).map((article) => (
                   <Link
                     key={article.id}
-                    to={`/article/${article.slug}`}
+                    to={`/articulo/${article.slug}`}
                     className="group space-y-3"
                   >
                     <div className="aspect-square rounded-2xl overflow-hidden bg-muted border border-primary/5 shadow-lg shadow-black/20">
@@ -429,7 +505,7 @@ export default function Index() {
               {trending.map((article, idx) => (
                 <Link
                   key={article.id}
-                  to={`/article/${article.slug}`}
+                  to={`/articulo/${article.slug}`}
                   className="group block"
                 >
                   <div className="flex gap-4">
@@ -605,7 +681,7 @@ function ArticleCard({ article }: { article: Article }) {
     ? new Date(article.published_at).toLocaleDateString("es-MX")
     : "";
   return (
-    <Link to={`/article/${article.slug}`} className="group block space-y-4">
+    <Link to={`/articulo/${article.slug}`} className="group block space-y-4">
       <div className="aspect-[16/10] overflow-hidden rounded-2xl bg-muted relative border border-primary/5">
         <img
           src={article.image_url ?? "/placeholder.jpg"}
@@ -639,7 +715,7 @@ function ArticleCard({ article }: { article: Article }) {
 function ArticleHorizontalCard({ article }: { article: Article }) {
   return (
     <Link
-      to={`/article/${article.slug}`}
+      to={`/articulo/${article.slug}`}
       className="group flex flex-col md:flex-row gap-6 p-4 rounded-3xl hover:bg-muted transition-all border border-transparent hover:border-primary/10"
     >
       <div className="md:w-1/3 aspect-[16/9] overflow-hidden rounded-2xl shrink-0 border border-primary/5 shadow-xl shadow-black/20">

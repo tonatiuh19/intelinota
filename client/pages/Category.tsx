@@ -7,11 +7,10 @@ import { cn } from "@/lib/utils";
 import { useEffect } from "react";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
 import {
-  fetchArticles,
-  fetchTrending,
-  selectArticles,
-  selectListLoading,
-  selectTrending,
+  fetchCategoryPage,
+  selectCategoryPageArticles,
+  selectCategoryPageTrending,
+  selectCategoryPageLoading,
 } from "@/store/slices/articlesSlice";
 import MetaHead from "@/components/MetaHead";
 
@@ -37,17 +36,16 @@ export default function Category() {
   const categoryName = urlSlug ? (SLUG_MAP[urlSlug] ?? urlSlug) : "";
   const dbSlug = urlSlug ? (URL_TO_DB_SLUG[urlSlug] ?? urlSlug) : "";
 
-  const filteredArticles = useAppSelector(selectArticles);
-  const loading = useAppSelector(selectListLoading);
-  const topArticles = useAppSelector(selectTrending);
+  const filteredArticles = useAppSelector(selectCategoryPageArticles);
+  const loading = useAppSelector(selectCategoryPageLoading);
+  const topArticles = useAppSelector(selectCategoryPageTrending);
 
   const subcategories = Array.from(
     new Set(filteredArticles.map((a) => a.subcategory_name).filter(Boolean)),
   ) as string[];
 
   useEffect(() => {
-    if (dbSlug) dispatch(fetchArticles({ category: dbSlug }));
-    dispatch(fetchTrending());
+    if (dbSlug) dispatch(fetchCategoryPage({ slug: dbSlug }));
   }, [dispatch, dbSlug]);
 
   return (
@@ -64,7 +62,7 @@ export default function Category() {
             <div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.4em] text-primary italic">
               Sección <ChevronRight className="h-3 w-3" /> {categoryName}
             </div>
-            <h1 className="text-6xl md:text-8xl font-black italic tracking-tighter uppercase leading-[0.8] text-white">
+            <h1 className="text-4xl sm:text-6xl md:text-8xl font-black italic tracking-tighter uppercase leading-[0.8] text-white">
               {categoryName}
             </h1>
             <p className="text-xl text-muted-foreground font-medium max-w-2xl leading-relaxed italic">
@@ -128,7 +126,7 @@ export default function Category() {
                 {filteredArticles.map((article, idx) => (
                   <Link
                     key={article.id}
-                    to={`/article/${article.slug}`}
+                    to={`/articulo/${article.slug}`}
                     className={cn(
                       "group block space-y-4",
                       idx === 0 &&
@@ -201,7 +199,7 @@ export default function Category() {
                 {topArticles.slice(0, 4).map((art, i) => (
                   <Link
                     key={art.id}
-                    to={`/article/${art.slug}`}
+                    to={`/articulo/${art.slug}`}
                     className="group flex gap-4"
                   >
                     <span className="text-3xl font-black text-primary/10 italic shrink-0 group-hover:text-primary/30 transition-colors">

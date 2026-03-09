@@ -3,7 +3,7 @@
 -- https://www.phpmyadmin.net/
 --
 -- Host: localhost:3306
--- Generation Time: Mar 06, 2026 at 11:06 PM
+-- Generation Time: Mar 08, 2026 at 09:03 PM
 -- Server version: 5.7.23-23
 -- PHP Version: 8.1.34
 
@@ -20,6 +20,29 @@ SET time_zone = "+00:00";
 --
 -- Database: `alanchat_intelinota`
 --
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `admin_login_codes`
+--
+
+CREATE TABLE `admin_login_codes` (
+  `id` int(10) UNSIGNED NOT NULL,
+  `email` varchar(255) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `code` varchar(10) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `expires_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  `used` tinyint(1) NOT NULL DEFAULT '0',
+  `ip_hash` varchar(64) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT 'SHA-256 of requester IP for rate-limit auditing',
+  `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Short-lived OTP codes for admin/author email login';
+
+--
+-- Dumping data for table `admin_login_codes`
+--
+
+INSERT INTO `admin_login_codes` (`id`, `email`, `code`, `expires_at`, `used`, `ip_hash`, `created_at`) VALUES
+(3, 'axgoomez@gmail.com', '668068', '2026-03-07 18:40:23', 1, 'b8bf8dbc6695c9934ab5c98058e4f15aa6325c61b62a54d271473a224ef6e3ae', '2026-03-07 18:39:58');
 
 -- --------------------------------------------------------
 
@@ -52,16 +75,17 @@ CREATE TABLE `articles` (
 --
 
 INSERT INTO `articles` (`id`, `slug`, `title`, `excerpt`, `content`, `category_id`, `subcategory_id`, `author_id`, `image_url`, `read_time_minutes`, `featured`, `trending`, `status`, `published_at`, `view_count`, `created_at`, `updated_at`) VALUES
-(1, 'futuro-ia-mas-alla-grandes-modelos-lenguaje', 'El Futuro de la IA: Más allá de los Grandes Modelos de Lenguaje', 'A medida que los LLM alcanzan su meseta, los investigadores exploran la IA neuro-simbólica como la próxima frontera para el razonamiento auténtico.', NULL, 1, 1, 1, 'https://images.unsplash.com/photo-1677442136019-21780ecad995?auto=format&fit=crop&q=80&w=1000', 8, 1, 1, 'published', '2024-05-24 15:00:00', 0, '2026-03-07 04:23:57', '2026-03-07 04:23:57'),
-(2, 'final-champions-league-previa-tactica', 'Final de la Champions League: Previa Táctica', 'Un análisis profundo de las estrategias de los dos gigantes que se enfrentarán en Wembley. ¿Quién dominará el mediocampo?', NULL, 2, 4, 2, 'https://images.unsplash.com/photo-1508098682722-e99c43a406b2?auto=format&fit=crop&q=80&w=1000', 6, 0, 1, 'published', '2024-05-23 15:00:00', 0, '2026-03-07 04:23:57', '2026-03-07 04:23:57'),
-(3, 'juego-indie-ano-ascenso-nebula', 'Juego Indie del Año: El Ascenso de \'Nebula\'', 'Cómo un equipo de tres desarrolladores creó una obra maestra que desafía a los gigantes AAA en narrativa y mecánicas.', NULL, 4, 10, 3, 'https://images.unsplash.com/photo-1542751371-adc38448a05e?auto=format&fit=crop&q=80&w=1000', 10, 0, 0, 'published', '2024-05-22 15:00:00', 0, '2026-03-07 04:23:57', '2026-03-07 04:23:57'),
-(4, 'regreso-del-cine-imax-ganando', 'El Regreso del Cine: Por qué IMAX está Ganando', 'Los cines están evolucionando. Exploramos cómo los formatos premium están devolviendo al público a la gran pantalla.', NULL, 3, 7, 4, 'https://images.unsplash.com/photo-1485846234645-a62644f84728?auto=format&fit=crop&q=80&w=1000', 5, 0, 0, 'published', '2024-05-21 15:00:00', 0, '2026-03-07 04:23:57', '2026-03-07 04:23:57'),
-(5, 'economia-global-2024-navegando-inflacion', 'Economía Global 2024: Navegando la Inflación', 'Los bancos centrales caminan por la cuerda floja. Lo que significan los últimos datos para tus inversiones y vida diaria.', NULL, 5, 13, 5, 'https://images.unsplash.com/photo-1611974714014-4986423b9f36?auto=format&fit=crop&q=80&w=1000', 12, 0, 1, 'published', '2024-05-20 15:00:00', 0, '2026-03-07 04:23:57', '2026-03-07 04:23:57'),
+(1, 'futuro-ia-mas-alla-grandes-modelos-lenguaje', 'El Futuro de la IA: Más allá de los Grandes Modelos de Lenguaje', 'A medida que los LLM alcanzan su meseta, los investigadores exploran la IA neuro-simbólica como la próxima frontera para el razonamiento auténtico.', NULL, 1, 1, 1, 'https://images.unsplash.com/photo-1677442136019-21780ecad995?auto=format&fit=crop&q=80&w=1000', 8, 1, 1, 'published', '2024-05-24 15:00:00', 2, '2026-03-07 04:23:57', '2026-03-07 19:08:04'),
+(2, 'final-champions-league-previa-tactica', 'Final de la Champions League: Previa Táctica', 'Un análisis profundo de las estrategias de los dos gigantes que se enfrentarán en Wembley. ¿Quién dominará el mediocampo?', NULL, 2, 4, 2, 'https://images.unsplash.com/photo-1508098682722-e99c43a406b2?auto=format&fit=crop&q=80&w=1000', 6, 1, 1, 'published', '2024-05-23 15:00:00', 5, '2026-03-07 04:23:57', '2026-03-09 00:47:07'),
+(3, 'juego-indie-ano-ascenso-nebula', 'Juego Indie del Año: El Ascenso de \'Nebula\'', 'Cómo un equipo de tres desarrolladores creó una obra maestra que desafía a los gigantes AAA en narrativa y mecánicas.', NULL, 4, 10, 3, 'https://images.unsplash.com/photo-1542751371-adc38448a05e?auto=format&fit=crop&q=80&w=1000', 10, 1, 0, 'published', '2024-05-22 15:00:00', 1, '2026-03-07 04:23:57', '2026-03-07 19:01:12'),
+(4, 'regreso-del-cine-imax-ganando', 'El Regreso del Cine: Por qué IMAX está Ganando', 'Los cines están evolucionando. Exploramos cómo los formatos premium están devolviendo al público a la gran pantalla.', NULL, 3, 7, 4, 'https://images.unsplash.com/photo-1485846234645-a62644f84728?auto=format&fit=crop&q=80&w=1000', 5, 1, 0, 'published', '2024-05-21 15:00:00', 3, '2026-03-07 04:23:57', '2026-03-07 18:43:18'),
+(5, 'economia-global-2024-navegando-inflacion', 'Economía Global 2024: Navegando la Inflación', 'Los bancos centrales caminan por la cuerda floja. Lo que significan los últimos datos para tus inversiones y vida diaria.', NULL, 5, 13, 5, 'https://images.unsplash.com/photo-1611974714014-4986423b9f36?auto=format&fit=crop&q=80&w=1000', 12, 0, 1, 'published', '2024-05-20 15:00:00', 2, '2026-03-07 04:23:57', '2026-03-09 02:52:35'),
 (6, 'explorando-abismo-descubrimientos-fosa-marianas', 'Explorando el Abismo: Nuevos Descubrimientos en la Fosa de las Marianas', 'Científicos descubren cinco nuevas especies de criaturas bioluminiscentes en las partes más oscuras del océano.', NULL, 5, 14, 6, 'https://images.unsplash.com/photo-1551244072-5d12893278ab?auto=format&fit=crop&q=80&w=1000', 15, 0, 0, 'published', '2024-05-19 15:00:00', 0, '2026-03-07 04:23:57', '2026-03-07 04:23:57'),
 (7, 'dominando-metaverso-guia-principiantes', 'Dominando el Metaverso: Guía para Principiantes', 'Todo lo que necesitas saber sobre la próxima iteración de internet y cómo empezar hoy mismo.', NULL, 1, 2, 7, 'https://images.unsplash.com/photo-1614850523296-d8c1af93d400?auto=format&fit=crop&q=80&w=1000', 7, 0, 0, 'published', '2024-05-18 15:00:00', 0, '2026-03-07 04:23:57', '2026-03-07 04:23:57'),
 (8, 'evolucion-esports-sotanos-estadios', 'La Evolución de los Esports: De Sótanos a Estadios', 'Cómo el gaming competitivo se transformó en una industria multimillonaria con reconocimiento global.', NULL, 4, 11, 8, 'https://images.unsplash.com/photo-1542751110-97427bbecf20?auto=format&fit=crop&q=80&w=1000', 9, 0, 0, 'published', '2024-05-17 15:00:00', 0, '2026-03-07 04:23:57', '2026-03-07 04:23:57'),
 (9, 'arte-narrar-historias-series-tv-modernas', 'El Arte de Narrar Historias en las Series de TV Modernas', 'Por qué la actual \'Edad de Oro de la Televisión\' está redefiniendo el consumo de narrativas de formato largo.', NULL, 3, 8, 9, 'https://images.unsplash.com/photo-1522869635100-9f4c5e86aa37?auto=format&fit=crop&q=80&w=1000', 11, 0, 0, 'published', '2024-05-16 15:00:00', 0, '2026-03-07 04:23:57', '2026-03-07 04:23:57'),
-(10, 'revolucion-tenis-nueva-generacion-toma-mando', 'Revolución en el Tenis: La Nueva Generación Toma el Mando', 'Cómo las jóvenes estrellas están rompiendo la dominación del Big Three y cambiando la cara del deporte.', NULL, 2, 5, 10, 'https://images.unsplash.com/photo-1595435066373-67856e4c274b?auto=format&fit=crop&q=80&w=1000', 8, 0, 0, 'published', '2024-05-15 15:00:00', 0, '2026-03-07 04:23:57', '2026-03-07 04:23:57');
+(10, 'revolucion-tenis-nueva-generacion-toma-mando', 'Revolución en el Tenis: La Nueva Generación Toma el Mando', 'Cómo las jóvenes estrellas están rompiendo la dominación del Big Three y cambiando la cara del deporte.', NULL, 2, 5, 10, 'https://images.unsplash.com/photo-1595435066373-67856e4c274b?auto=format&fit=crop&q=80&w=1000', 8, 0, 0, 'published', '2024-05-15 15:00:00', 0, '2026-03-07 04:23:57', '2026-03-07 04:23:57'),
+(11, 'por-que-para-chivas-el-clasico-contra-atlas-puede-ser-mas-importante-que-contra-america', '¿Por qué para Chivas el clásico contra Atlas puede ser más importante que contra América?', 'Por qué para muchos aficionados de Chivas el Clásico Tapatío contra Atlas se vive con más intensidad que el Clásico Nacional frente al América.', NULL, 2, 4, 8, 'https://eliasarriazola.wordpress.com/wp-content/uploads/2014/03/chivas-aficion.jpg?w=1100', 3, 1, 1, 'published', '2026-03-09 08:52:00', 1, '2026-03-09 02:52:35', '2026-03-09 03:02:02');
 
 -- --------------------------------------------------------
 
@@ -133,7 +157,15 @@ INSERT INTO `article_blocks` (`id`, `article_id`, `position`, `type`, `data`, `c
 (48, 10, 2, 'image', '{\"alt\": \"Tenista joven en acción durante un partido\", \"url\": \"https://images.unsplash.com/photo-1554068865-24cecd4e34b8?auto=format&fit=crop&q=80&w=1400\", \"credit\": \"Unsplash\", \"caption\": \"La nueva generación del tenis ha llegado para quedarse\"}', '2026-03-07 04:23:57'),
 (49, 10, 3, 'html', '{\"html\": \"<h2>Los Nombres del Futuro</h2><p>Carlos Alcaraz ya no es una promesa; es una realidad. Con dos Grand Slams conquistados antes de los 21 años, el murciano ha demostrado tener el juego completo para dominar el deporte durante la próxima década. Jannik Sinner, Holger Rune y Félix Auger-Aliassime completan un cuarteto generacional sin precedentes en cuanto a densidad de talento.</p>\"}', '2026-03-07 04:23:57'),
 (50, 10, 4, 'twitter', '{\"tweet_id\": \"1792345678901234567\", \"tweet_url\": \"https://twitter.com/atptour/status/1792345678901234567\"}', '2026-03-07 04:23:57'),
-(51, 10, 5, 'quote', '{\"text\": \"Nunca había visto tanta calidad junta en una misma generación. Y lo mejor es que aún les queda mucho por mejorar.\", \"attribution\": \"John McEnroe, Comentarista\"}', '2026-03-07 04:23:57');
+(51, 10, 5, 'quote', '{\"text\": \"Nunca había visto tanta calidad junta en una misma generación. Y lo mejor es que aún les queda mucho por mejorar.\", \"attribution\": \"John McEnroe, Comentarista\"}', '2026-03-07 04:23:57'),
+(52, 11, 1, 'html', '{\"html\": \"<h2>La noche que Guadalajara volvió a pintarse de rojiblanco</h2><p></p>\"}', '2026-03-09 02:52:35'),
+(53, 11, 2, 'html', '{\"html\": \"<p>La noche del 7 de marzo de 2026, el Chivas de Guadalajara volvió a demostrar por qué el orgullo de la ciudad pesa tanto en este enfrentamiento. En el Estadio Jalisco, el Rebaño remontó el partido y derrotó 2-1 al Atlas Fútbol Club con goles de Armando González y Ángel Sepúlveda, llevándose una edición más del histórico Clásico Tapatío.</p><p>El triunfo no solo significó tres puntos en el torneo Clausura 2026. También añadió otro capítulo a una rivalidad que lleva más de un siglo escribiéndose en Guadalajara. El enfrentamiento entre rojiblancos y rojinegros se disputó por centésima vez dentro de una larga historia de clásicos que comenzó en 1916, consolidándose como una de las rivalidades más antiguas del fútbol mexicano.<br></p><p>Y es precisamente ahí donde surge una pregunta interesante dentro de la cultura futbolera: ¿por qué para muchos aficionados de Chivas el clásico contra Atlas puede sentirse incluso más importante que el partido contra el América?<br></p><p>Para entenderlo, hay que mirar más allá de los títulos, la televisión y la rivalidad nacional. Hay que mirar a Guadalajara, a sus barrios, a sus familias y a una rivalidad que se vive todos los días, no solo cuando rueda el balón.</p>\"}', '2026-03-09 02:52:35'),
+(54, 11, 3, 'html', '{\"html\": \"<h2>El Clásico que divide Guadalajara: por qué para Chivas el Atlas pesa más que el América</h2><p></p>\"}', '2026-03-09 02:52:35'),
+(55, 11, 4, 'html', '{\"html\": \"<p>En el fútbol mexicano existe una rivalidad que domina titulares, ratings y debates en todo el país: el enfrentamiento entre <strong>Chivas de Guadalajara</strong> y <strong>Club América</strong>, conocido como el <strong>Clásico Nacional</strong>. Sin embargo, para muchos aficionados rojiblancos hay un partido que se vive con una intensidad distinta, más íntima y emocional: el duelo contra <strong>Atlas Fútbol Club</strong>, el histórico <strong>Clásico Tapatío</strong>.<br></p><p>Aunque el América representa el rival más mediático del país, el Atlas representa algo aún más profundo para la afición de Chivas: el orgullo de Guadalajara.</p>\"}', '2026-03-09 02:52:35'),
+(56, 11, 5, 'html', '{\"html\": \"<h3>Una rivalidad que nació en la misma ciudad</h3><p></p>\"}', '2026-03-09 02:52:35'),
+(57, 11, 6, 'image', '{\"alt\": \"\", \"url\": \"https://www.informador.mx/export/sites/elinformador/img/2019/02/14/imagen_06_diciembre_2019.jpg_320310160.jpg\", \"credit\": \"El Informador\", \"caption\": \"En 1943, el año de la creación de la Liga mexicana, el encono entre rojiblancos y rojinegros ya estaba consolidado.\"}', '2026-03-09 02:52:35'),
+(58, 11, 7, 'html', '{\"html\": \"<p>La diferencia clave entre los dos clásicos radica en la convivencia cotidiana. El América es un rival nacional, pero para los aficionados de Chivas en Guadalajara <strong>no es un rival con el que convivan diariamente</strong>.</p><p>En cambio, los aficionados del Atlas forman parte de la misma comunidad. Eso significa que cada derrota puede convertirse en motivo de bromas, debates y rivalidad directa durante meses.<br></p><p>En ese contexto, ganar el Clásico Tapatío no solo suma tres puntos: <strong>significa demostrar quién manda en la ciudad</strong>.</p><h3>Identidad y tradición<br></h3><p>Históricamente, ambos clubes también han representado identidades distintas dentro de Guadalajara. Chivas se consolidó como un equipo popular con una identidad profundamente mexicana, mientras que Atlas desarrolló una reputación ligada a la formación de talento y una tradición futbolística más académica.</p><p>Estas diferencias alimentaron la rivalidad durante más de un siglo, convirtiendo el Clásico Tapatío en una de las rivalidades más arraigadas del fútbol mexicano.</p><h3>El Clásico Nacional: grandeza contra grandeza<br></h3><p>Esto no significa que el enfrentamiento contra el América pierda importancia. El duelo entre Chivas y América representa algo diferente: una rivalidad de alcance nacional entre dos de los clubes más populares y exitosos del país. El Clásico Nacional es un espectáculo mediático, seguido por millones de aficionados y cargado de historia en finales, liguillas y polémicas.<br></p><p>Sin embargo, mientras ese clásico representa poder y grandeza en el fútbol mexicano, el enfrentamiento contra Atlas representa algo más cercano: <strong>la identidad de Guadalajara</strong>.</p><h3>Dos clásicos, dos emociones</h3><p>Para la afición rojiblanca, ambos partidos tienen un valor especial, pero por razones distintas.<br></p><p>El Clásico Nacional se vive con orgullo nacional y rivalidad histórica entre gigantes del fútbol mexicano. El Clásico Tapatío, en cambio, se vive con el corazón de la ciudad.</p><p>Por eso muchos aficionados de Chivas repiten una frase que resume perfectamente este sentimiento:</p>\"}', '2026-03-09 02:52:35'),
+(59, 11, 8, 'quote', '{\"text\": \"Al América hay que ganarle… pero al Atlas no se le puede perder.\", \"attribution\": \"\"}', '2026-03-09 02:52:35');
 
 -- --------------------------------------------------------
 
@@ -178,7 +210,8 @@ INSERT INTO `authors` (`id`, `name`, `slug`, `bio`, `avatar_url`, `email`, `twit
 (7, 'Zoe Chen', 'zoe-chen', 'Especialista en startups, web3 y tecnologías emergentes.', NULL, NULL, NULL, '2026-03-07 04:23:56', '2026-03-07 04:23:56'),
 (8, 'Alex Rivers', 'alex-rivers', 'Periodista de esports y cultura competitiva digital.', NULL, NULL, NULL, '2026-03-07 04:23:56', '2026-03-07 04:23:56'),
 (9, 'Laura Smith', 'laura-smith', 'Crítica de series de TV y narrativa audiovisual.', NULL, NULL, NULL, '2026-03-07 04:23:56', '2026-03-07 04:23:56'),
-(10, 'Pete Sampras', 'pete-sampras', 'Analista de tenis y seguidor de la nueva generación.', NULL, NULL, NULL, '2026-03-07 04:23:56', '2026-03-07 04:23:56');
+(10, 'Pete Sampras', 'pete-sampras', 'Analista de tenis y seguidor de la nueva generación.', NULL, NULL, NULL, '2026-03-07 04:23:56', '2026-03-07 04:23:56'),
+(11, 'Tonatiuh Gomez', 'tonatiuh-gomez', 'Emprendedor tecnológico y creador de productos digitales.', NULL, 'axgoomez@gmail.com', NULL, '2026-03-09 03:00:03', '2026-03-09 03:01:35');
 
 -- --------------------------------------------------------
 
@@ -318,21 +351,160 @@ CREATE TABLE `tags` (
 CREATE TABLE `users` (
   `id` int(10) UNSIGNED NOT NULL,
   `email` varchar(255) COLLATE utf8mb4_unicode_ci NOT NULL,
-  `password_hash` varchar(255) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `password_hash` varchar(255) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `name` varchar(150) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `avatar_url` varchar(512) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
-  `role` enum('admin','editor','reader') COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'reader',
+  `role` enum('admin','editor','reader','author') COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'reader',
   `email_verified` tinyint(1) NOT NULL DEFAULT '0',
   `verification_token` varchar(255) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `reset_token` varchar(255) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `reset_token_expires_at` timestamp NULL DEFAULT NULL,
   `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  `updated_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+  `updated_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  `author_id` int(10) UNSIGNED DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+--
+-- Dumping data for table `users`
+--
+
+INSERT INTO `users` (`id`, `email`, `password_hash`, `name`, `avatar_url`, `role`, `email_verified`, `verification_token`, `reset_token`, `reset_token_expires_at`, `created_at`, `updated_at`, `author_id`) VALUES
+(1, 'axgoomez@gmail.com', NULL, 'Alex Gomez', NULL, 'admin', 1, NULL, NULL, NULL, '2026-03-07 06:22:35', '2026-03-09 03:00:04', 11);
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `visitors`
+--
+
+CREATE TABLE `visitors` (
+  `id` bigint(20) UNSIGNED NOT NULL,
+  `session_id` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL COMMENT 'Anonymous session ID — UUID sent via X-Session-Id header or server-derived fallback',
+  `ip_hash` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL COMMENT 'SHA-256(raw_ip + VISITORS_SALT env var) — never stores the raw IP address',
+  `ip_country` varchar(2) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT 'ISO 3166-1 alpha-2 from CF-IPCountry or x-vercel-ip-country',
+  `ip_city` varchar(100) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT 'City name from x-vercel-ip-city (Vercel deployments only)',
+  `user_agent` varchar(512) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `browser` varchar(50) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `browser_version` varchar(20) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `os` varchar(50) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `device_type` enum('desktop','mobile','tablet','bot','unknown') COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'unknown',
+  `is_bot` tinyint(1) NOT NULL DEFAULT '0' COMMENT '1 when UA matches a known bot/crawler pattern',
+  `event_type` enum('home_view','article_view','category_view','search','other') COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'other',
+  `page_path` varchar(500) COLLATE utf8mb4_unicode_ci NOT NULL COMMENT 'URL path that was accessed',
+  `article_id` int(10) UNSIGNED DEFAULT NULL COMMENT 'FK → articles.id, set for article_view events',
+  `category_id` int(10) UNSIGNED DEFAULT NULL COMMENT 'FK → categories.id, set for category_view events',
+  `referrer` varchar(500) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT 'Full Referer header value (truncated to 500 chars)',
+  `referrer_domain` varchar(150) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT 'Parsed hostname of the referrer',
+  `utm_source` varchar(100) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `utm_medium` varchar(100) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `utm_campaign` varchar(100) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `utm_content` varchar(100) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `utm_term` varchar(100) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `user_id` int(10) UNSIGNED DEFAULT NULL COMMENT 'FK → users.id — NULL for anonymous visitors',
+  `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Per-request visitor/pageview event log — fire-and-forget inserts, never blocks API responses';
+
+--
+-- Dumping data for table `visitors`
+--
+
+INSERT INTO `visitors` (`id`, `session_id`, `ip_hash`, `ip_country`, `ip_city`, `user_agent`, `browser`, `browser_version`, `os`, `device_type`, `is_bot`, `event_type`, `page_path`, `article_id`, `category_id`, `referrer`, `referrer_domain`, `utm_source`, `utm_medium`, `utm_campaign`, `utm_content`, `utm_term`, `user_id`, `created_at`) VALUES
+(1, '9b2d4700e13b5adffaa9cafd7eb858a315939d3fa3ffde5572e3ef75148cced1', 'b8bf8dbc6695c9934ab5c98058e4f15aa6325c61b62a54d271473a224ef6e3ae', NULL, NULL, 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36', 'Chrome', '145.0.0.0', 'macOS', 'desktop', 0, 'home_view', '/', NULL, NULL, 'http://localhost:8081/', 'localhost', NULL, NULL, NULL, NULL, NULL, NULL, '2026-03-07 05:14:06'),
+(2, '9b2d4700e13b5adffaa9cafd7eb858a315939d3fa3ffde5572e3ef75148cced1', 'b8bf8dbc6695c9934ab5c98058e4f15aa6325c61b62a54d271473a224ef6e3ae', NULL, NULL, 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36', 'Chrome', '145.0.0.0', 'macOS', 'desktop', 0, 'home_view', '/', NULL, NULL, 'http://localhost:8081/', 'localhost', NULL, NULL, NULL, NULL, NULL, NULL, '2026-03-07 05:16:34'),
+(3, '9b2d4700e13b5adffaa9cafd7eb858a315939d3fa3ffde5572e3ef75148cced1', 'b8bf8dbc6695c9934ab5c98058e4f15aa6325c61b62a54d271473a224ef6e3ae', NULL, NULL, 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36', 'Chrome', '145.0.0.0', 'macOS', 'desktop', 0, 'home_view', '/', NULL, NULL, 'http://localhost:8081/', 'localhost', NULL, NULL, NULL, NULL, NULL, NULL, '2026-03-07 05:35:07'),
+(4, '9b2d4700e13b5adffaa9cafd7eb858a315939d3fa3ffde5572e3ef75148cced1', 'b8bf8dbc6695c9934ab5c98058e4f15aa6325c61b62a54d271473a224ef6e3ae', NULL, NULL, 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36', 'Chrome', '145.0.0.0', 'macOS', 'desktop', 0, 'article_view', '/article/final-champions-league-previa-tactica', 2, 2, 'http://localhost:8081/article/final-champions-league-previa-tactica', 'localhost', NULL, NULL, NULL, NULL, NULL, NULL, '2026-03-07 05:35:21'),
+(5, '9b2d4700e13b5adffaa9cafd7eb858a315939d3fa3ffde5572e3ef75148cced1', 'b8bf8dbc6695c9934ab5c98058e4f15aa6325c61b62a54d271473a224ef6e3ae', NULL, NULL, 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36', 'Chrome', '145.0.0.0', 'macOS', 'desktop', 0, 'home_view', '/', NULL, NULL, 'http://localhost:8081/article/final-champions-league-previa-tactica', 'localhost', NULL, NULL, NULL, NULL, NULL, NULL, '2026-03-07 05:35:34'),
+(6, '9b2d4700e13b5adffaa9cafd7eb858a315939d3fa3ffde5572e3ef75148cced1', 'b8bf8dbc6695c9934ab5c98058e4f15aa6325c61b62a54d271473a224ef6e3ae', NULL, NULL, 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36', 'Chrome', '145.0.0.0', 'macOS', 'desktop', 0, 'article_view', '/article/final-champions-league-previa-tactica', 2, 2, 'http://localhost:8081/article/final-champions-league-previa-tactica', 'localhost', NULL, NULL, NULL, NULL, NULL, NULL, '2026-03-07 05:35:34'),
+(7, '00c9171e0b9ee213954e63ed22332f4460edbd13b2802184055440d899b6a29f', 'b7ebc9c771b4f13e2c89d8709b9aef014c2adda6e38d1ebc8c33c7bebf92a6c8', 'US', 'Santa%20Clara', 'vercel-screenshot/1.0', 'unknown', NULL, 'unknown', 'desktop', 0, 'home_view', '/', NULL, NULL, 'https://intelinota-mw81mmrks-alex-gomezs-projects-d5136c4b.vercel.app/', 'intelinota-mw81mmrks-alex-gomezs-projects-d5136c4b.vercel.app', NULL, NULL, NULL, NULL, NULL, NULL, '2026-03-07 05:43:27'),
+(8, '00c9171e0b9ee213954e63ed22332f4460edbd13b2802184055440d899b6a29f', 'b7ebc9c771b4f13e2c89d8709b9aef014c2adda6e38d1ebc8c33c7bebf92a6c8', 'US', 'Santa%20Clara', 'vercel-screenshot/1.0', 'unknown', NULL, 'unknown', 'desktop', 0, 'home_view', '/', NULL, NULL, 'https://intelinota-mw81mmrks-alex-gomezs-projects-d5136c4b.vercel.app/', 'intelinota-mw81mmrks-alex-gomezs-projects-d5136c4b.vercel.app', NULL, NULL, NULL, NULL, NULL, NULL, '2026-03-07 05:43:28'),
+(9, 'f613453681e967a392251125a62008b9edca259abf09ea20c654e5fddb23449c', '880dba01efacf467151db0ab045132a630cff041b6d95354f6637333e4ede556', 'US', 'Santa%20Clara', 'vercel-screenshot/1.0', 'unknown', NULL, 'unknown', 'desktop', 0, 'home_view', '/', NULL, NULL, 'https://intelinota-3ug7o9ayy-alex-gomezs-projects-d5136c4b.vercel.app/', 'intelinota-3ug7o9ayy-alex-gomezs-projects-d5136c4b.vercel.app', NULL, NULL, NULL, NULL, NULL, NULL, '2026-03-07 05:44:06'),
+(10, '3e9bbd1f8baa658538024984f47275f79d3cb1175b0ebfd05692da3a329864a6', '6f137298f73ab92d1a2fb268f96a9dbcdea1a050573f56b30f888fc5b9579a74', 'US', 'Santa%20Clara', 'vercel-screenshot/1.0', 'unknown', NULL, 'unknown', 'desktop', 0, 'home_view', '/', NULL, NULL, 'https://intelinota-3ug7o9ayy-alex-gomezs-projects-d5136c4b.vercel.app/', 'intelinota-3ug7o9ayy-alex-gomezs-projects-d5136c4b.vercel.app', NULL, NULL, NULL, NULL, NULL, NULL, '2026-03-07 05:44:07'),
+(11, '991ff911a0acaea5314be9890f94af8f84737b46ef8639082526d6a96ecef1bb', 'd64424e39e8528d85f9294de0adae4b65be5e6aacac7a7816bc9c15179b1f44f', 'MX', 'Cuauht%C3%A9moc', 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36', 'Chrome', '145.0.0.0', 'macOS', 'desktop', 0, 'home_view', '/', NULL, NULL, 'https://intelinota.vercel.app/', 'intelinota.vercel.app', NULL, NULL, NULL, NULL, NULL, NULL, '2026-03-07 05:44:13'),
+(12, '1127528946ddc9324028e1baac556ada2b50a6586414e5342bb1bd61f4d29990', '8296953c55cfc5c2c19e66910a33e5f22ab2f90f047d12b05e8fcb06225865ad', 'US', 'Santa%20Clara', 'vercel-screenshot/1.0', 'unknown', NULL, 'unknown', 'desktop', 0, 'home_view', '/', NULL, NULL, 'https://intelinota-l9fspkhlp-alex-gomezs-projects-d5136c4b.vercel.app/', 'intelinota-l9fspkhlp-alex-gomezs-projects-d5136c4b.vercel.app', NULL, NULL, NULL, NULL, NULL, NULL, '2026-03-07 05:44:35'),
+(13, 'ac77b381f160c08597071d57f51d16c6dc03a93e182743812aa3f1d1cc96f01e', 'c64a06382a64bbe2f7af08038e6e904bf915defa970c325aa62fc97ac276a3bb', 'US', 'Santa%20Clara', 'vercel-screenshot/1.0', 'unknown', NULL, 'unknown', 'desktop', 0, 'home_view', '/', NULL, NULL, 'https://intelinota-ovux255fx-alex-gomezs-projects-d5136c4b.vercel.app/', 'intelinota-ovux255fx-alex-gomezs-projects-d5136c4b.vercel.app', NULL, NULL, NULL, NULL, NULL, NULL, '2026-03-07 05:45:44'),
+(14, '301bea6bec955594bea709add83b7a1ef52410ed68aea5cff13f6ad8b2fe01ef', '89bcc07db5ef0b84dd6fe37cfdd4f976b19a37582b080fe7cb3482b69a2addf1', 'US', 'Santa%20Clara', 'vercel-screenshot/1.0', 'unknown', NULL, 'unknown', 'desktop', 0, 'home_view', '/', NULL, NULL, 'https://intelinota-ovux255fx-alex-gomezs-projects-d5136c4b.vercel.app/', 'intelinota-ovux255fx-alex-gomezs-projects-d5136c4b.vercel.app', NULL, NULL, NULL, NULL, NULL, NULL, '2026-03-07 05:45:45'),
+(15, '77d0fab3aab0efb1e74935b6b586907694b37a81f7b510a41b524406301245b9', 'beedb184c9111317c043dc129b8deef3a7d2ee2a502006ae85994c095d2a02b5', 'US', 'Santa%20Clara', 'vercel-screenshot/1.0', 'unknown', NULL, 'unknown', 'desktop', 0, 'home_view', '/', NULL, NULL, 'https://intelinota-fvaj44e56-alex-gomezs-projects-d5136c4b.vercel.app/', 'intelinota-fvaj44e56-alex-gomezs-projects-d5136c4b.vercel.app', NULL, NULL, NULL, NULL, NULL, NULL, '2026-03-07 05:48:53'),
+(16, '4a31ca0432c371302176184a0dfa120bb12c7ba93c6dd7d18506f05f0d0f1db7', 'd3260a277a7f746c1fd61502310c158068c10c15b468787299eb22f4cd1addfe', 'US', 'Santa%20Clara', 'vercel-screenshot/1.0', 'unknown', NULL, 'unknown', 'desktop', 0, 'home_view', '/', NULL, NULL, 'https://intelinota-fvaj44e56-alex-gomezs-projects-d5136c4b.vercel.app/', 'intelinota-fvaj44e56-alex-gomezs-projects-d5136c4b.vercel.app', NULL, NULL, NULL, NULL, NULL, NULL, '2026-03-07 05:48:54'),
+(17, '991ff911a0acaea5314be9890f94af8f84737b46ef8639082526d6a96ecef1bb', 'd64424e39e8528d85f9294de0adae4b65be5e6aacac7a7816bc9c15179b1f44f', 'MX', 'Cuauht%C3%A9moc', 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36', 'Chrome', '145.0.0.0', 'macOS', 'desktop', 0, 'home_view', '/', NULL, NULL, 'https://intelinota.vercel.app/', 'intelinota.vercel.app', NULL, NULL, NULL, NULL, NULL, NULL, '2026-03-07 05:50:51'),
+(18, '9b2d4700e13b5adffaa9cafd7eb858a315939d3fa3ffde5572e3ef75148cced1', 'b8bf8dbc6695c9934ab5c98058e4f15aa6325c61b62a54d271473a224ef6e3ae', NULL, NULL, 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36', 'Chrome', '145.0.0.0', 'macOS', 'desktop', 0, 'home_view', '/', NULL, NULL, 'http://localhost:8081/article/final-champions-league-previa-tactica', 'localhost', NULL, NULL, NULL, NULL, NULL, NULL, '2026-03-07 06:23:01'),
+(19, '9b2d4700e13b5adffaa9cafd7eb858a315939d3fa3ffde5572e3ef75148cced1', 'b8bf8dbc6695c9934ab5c98058e4f15aa6325c61b62a54d271473a224ef6e3ae', NULL, NULL, 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36', 'Chrome', '145.0.0.0', 'macOS', 'desktop', 0, 'home_view', '/', NULL, NULL, 'http://localhost:8081/admin/articles/new', 'localhost', NULL, NULL, NULL, NULL, NULL, NULL, '2026-03-07 06:38:43'),
+(20, '9b2d4700e13b5adffaa9cafd7eb858a315939d3fa3ffde5572e3ef75148cced1', 'b8bf8dbc6695c9934ab5c98058e4f15aa6325c61b62a54d271473a224ef6e3ae', NULL, NULL, 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36', 'Chrome', '145.0.0.0', 'macOS', 'desktop', 0, 'home_view', '/', NULL, NULL, 'http://localhost:8081/admin/articles/new', 'localhost', NULL, NULL, NULL, NULL, NULL, NULL, '2026-03-07 06:46:21'),
+(21, '9b2d4700e13b5adffaa9cafd7eb858a315939d3fa3ffde5572e3ef75148cced1', 'b8bf8dbc6695c9934ab5c98058e4f15aa6325c61b62a54d271473a224ef6e3ae', NULL, NULL, 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36', 'Chrome', '145.0.0.0', 'macOS', 'desktop', 0, 'home_view', '/', NULL, NULL, 'http://localhost:8081/admin/articles/new', 'localhost', NULL, NULL, NULL, NULL, NULL, NULL, '2026-03-07 07:02:58'),
+(22, '9b2d4700e13b5adffaa9cafd7eb858a315939d3fa3ffde5572e3ef75148cced1', 'b8bf8dbc6695c9934ab5c98058e4f15aa6325c61b62a54d271473a224ef6e3ae', NULL, NULL, 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36', 'Chrome', '145.0.0.0', 'macOS', 'desktop', 0, 'home_view', '/', NULL, NULL, 'http://localhost:8081/admin/articles/new', 'localhost', NULL, NULL, NULL, NULL, NULL, NULL, '2026-03-07 07:05:27'),
+(23, '9b2d4700e13b5adffaa9cafd7eb858a315939d3fa3ffde5572e3ef75148cced1', 'b8bf8dbc6695c9934ab5c98058e4f15aa6325c61b62a54d271473a224ef6e3ae', NULL, NULL, 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36', 'Chrome', '145.0.0.0', 'macOS', 'desktop', 0, 'home_view', '/', NULL, NULL, 'http://localhost:8081/', 'localhost', NULL, NULL, NULL, NULL, NULL, NULL, '2026-03-07 07:05:45'),
+(24, '9b2d4700e13b5adffaa9cafd7eb858a315939d3fa3ffde5572e3ef75148cced1', 'b8bf8dbc6695c9934ab5c98058e4f15aa6325c61b62a54d271473a224ef6e3ae', NULL, NULL, 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36', 'Chrome', '145.0.0.0', 'macOS', 'desktop', 0, 'article_view', '/article/final-champions-league-previa-tactica', 2, 2, 'http://localhost:8081/article/final-champions-league-previa-tactica', 'localhost', NULL, NULL, NULL, NULL, NULL, NULL, '2026-03-07 07:06:00'),
+(25, '9b2d4700e13b5adffaa9cafd7eb858a315939d3fa3ffde5572e3ef75148cced1', 'b8bf8dbc6695c9934ab5c98058e4f15aa6325c61b62a54d271473a224ef6e3ae', NULL, NULL, 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36', 'Chrome', '145.0.0.0', 'macOS', 'desktop', 0, 'home_view', '/', NULL, NULL, 'http://localhost:8081/', 'localhost', NULL, NULL, NULL, NULL, NULL, NULL, '2026-03-07 07:22:57'),
+(26, '9b2d4700e13b5adffaa9cafd7eb858a315939d3fa3ffde5572e3ef75148cced1', 'b8bf8dbc6695c9934ab5c98058e4f15aa6325c61b62a54d271473a224ef6e3ae', NULL, NULL, 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36', 'Chrome', '145.0.0.0', 'macOS', 'desktop', 0, 'home_view', '/', NULL, NULL, 'http://localhost:8081/', 'localhost', NULL, NULL, NULL, NULL, NULL, NULL, '2026-03-07 07:23:14'),
+(27, '9b2d4700e13b5adffaa9cafd7eb858a315939d3fa3ffde5572e3ef75148cced1', 'b8bf8dbc6695c9934ab5c98058e4f15aa6325c61b62a54d271473a224ef6e3ae', NULL, NULL, 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36', 'Chrome', '145.0.0.0', 'macOS', 'desktop', 0, 'home_view', '/', NULL, NULL, 'http://localhost:8081/', 'localhost', NULL, NULL, NULL, NULL, NULL, NULL, '2026-03-07 07:25:40'),
+(28, '9b2d4700e13b5adffaa9cafd7eb858a315939d3fa3ffde5572e3ef75148cced1', 'b8bf8dbc6695c9934ab5c98058e4f15aa6325c61b62a54d271473a224ef6e3ae', NULL, NULL, 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36', 'Chrome', '145.0.0.0', 'macOS', 'desktop', 0, 'home_view', '/', NULL, NULL, 'http://localhost:8081/', 'localhost', NULL, NULL, NULL, NULL, NULL, NULL, '2026-03-07 07:37:25'),
+(29, '9b2d4700e13b5adffaa9cafd7eb858a315939d3fa3ffde5572e3ef75148cced1', 'b8bf8dbc6695c9934ab5c98058e4f15aa6325c61b62a54d271473a224ef6e3ae', NULL, NULL, 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36', 'Chrome', '145.0.0.0', 'macOS', 'desktop', 0, 'home_view', '/', NULL, NULL, 'http://localhost:8081/', 'localhost', NULL, NULL, NULL, NULL, NULL, NULL, '2026-03-07 07:37:35'),
+(30, '9b2d4700e13b5adffaa9cafd7eb858a315939d3fa3ffde5572e3ef75148cced1', 'b8bf8dbc6695c9934ab5c98058e4f15aa6325c61b62a54d271473a224ef6e3ae', NULL, NULL, 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36', 'Chrome', '145.0.0.0', 'macOS', 'desktop', 0, 'home_view', '/', NULL, NULL, 'http://localhost:8081/', 'localhost', NULL, NULL, NULL, NULL, NULL, NULL, '2026-03-07 07:37:45'),
+(31, '9b2d4700e13b5adffaa9cafd7eb858a315939d3fa3ffde5572e3ef75148cced1', 'b8bf8dbc6695c9934ab5c98058e4f15aa6325c61b62a54d271473a224ef6e3ae', NULL, NULL, 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36', 'Chrome', '145.0.0.0', 'macOS', 'desktop', 0, 'article_view', '/article/economia-global-2024-navegando-inflacion', 5, 5, 'http://localhost:8081/article/economia-global-2024-navegando-inflacion', 'localhost', NULL, NULL, NULL, NULL, NULL, NULL, '2026-03-07 07:38:02'),
+(32, '9b2d4700e13b5adffaa9cafd7eb858a315939d3fa3ffde5572e3ef75148cced1', 'b8bf8dbc6695c9934ab5c98058e4f15aa6325c61b62a54d271473a224ef6e3ae', NULL, NULL, 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36', 'Chrome', '145.0.0.0', 'macOS', 'desktop', 0, 'home_view', '/', NULL, NULL, 'http://localhost:8081/article/economia-global-2024-navegando-inflacion', 'localhost', NULL, NULL, NULL, NULL, NULL, NULL, '2026-03-07 07:38:06'),
+(33, '9b2d4700e13b5adffaa9cafd7eb858a315939d3fa3ffde5572e3ef75148cced1', 'b8bf8dbc6695c9934ab5c98058e4f15aa6325c61b62a54d271473a224ef6e3ae', NULL, NULL, 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36', 'Chrome', '145.0.0.0', 'macOS', 'desktop', 0, 'article_view', '/article/economia-global-2024-navegando-inflacion', 5, 5, 'http://localhost:8081/article/economia-global-2024-navegando-inflacion', 'localhost', NULL, NULL, NULL, NULL, NULL, NULL, '2026-03-07 07:38:06'),
+(34, '9b2d4700e13b5adffaa9cafd7eb858a315939d3fa3ffde5572e3ef75148cced1', 'b8bf8dbc6695c9934ab5c98058e4f15aa6325c61b62a54d271473a224ef6e3ae', NULL, NULL, 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36', 'Chrome', '145.0.0.0', 'macOS', 'desktop', 0, 'home_view', '/', NULL, NULL, 'http://localhost:8080/', 'localhost', NULL, NULL, NULL, NULL, NULL, NULL, '2026-03-07 18:27:26'),
+(35, '9b2d4700e13b5adffaa9cafd7eb858a315939d3fa3ffde5572e3ef75148cced1', 'b8bf8dbc6695c9934ab5c98058e4f15aa6325c61b62a54d271473a224ef6e3ae', NULL, NULL, 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36', 'Chrome', '145.0.0.0', 'macOS', 'desktop', 0, 'home_view', '/', NULL, NULL, 'http://localhost:8080/', 'localhost', NULL, NULL, NULL, NULL, NULL, NULL, '2026-03-07 18:31:41'),
+(36, '9b2d4700e13b5adffaa9cafd7eb858a315939d3fa3ffde5572e3ef75148cced1', 'b8bf8dbc6695c9934ab5c98058e4f15aa6325c61b62a54d271473a224ef6e3ae', NULL, NULL, 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36', 'Chrome', '145.0.0.0', 'macOS', 'desktop', 0, 'home_view', '/', NULL, NULL, 'http://localhost:8080/', 'localhost', NULL, NULL, NULL, NULL, NULL, NULL, '2026-03-07 18:32:04'),
+(37, '9b2d4700e13b5adffaa9cafd7eb858a315939d3fa3ffde5572e3ef75148cced1', 'b8bf8dbc6695c9934ab5c98058e4f15aa6325c61b62a54d271473a224ef6e3ae', NULL, NULL, 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36', 'Chrome', '145.0.0.0', 'macOS', 'desktop', 0, 'home_view', '/', NULL, NULL, 'http://localhost:8080/', 'localhost', NULL, NULL, NULL, NULL, NULL, NULL, '2026-03-07 18:32:10'),
+(38, '9b2d4700e13b5adffaa9cafd7eb858a315939d3fa3ffde5572e3ef75148cced1', 'b8bf8dbc6695c9934ab5c98058e4f15aa6325c61b62a54d271473a224ef6e3ae', NULL, NULL, 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36', 'Chrome', '145.0.0.0', 'macOS', 'desktop', 0, 'home_view', '/', NULL, NULL, 'http://localhost:8080/', 'localhost', NULL, NULL, NULL, NULL, NULL, NULL, '2026-03-07 18:32:28'),
+(39, '9b2d4700e13b5adffaa9cafd7eb858a315939d3fa3ffde5572e3ef75148cced1', 'b8bf8dbc6695c9934ab5c98058e4f15aa6325c61b62a54d271473a224ef6e3ae', NULL, NULL, 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36', 'Chrome', '145.0.0.0', 'macOS', 'desktop', 0, 'home_view', '/', NULL, NULL, 'http://localhost:8080/', 'localhost', NULL, NULL, NULL, NULL, NULL, NULL, '2026-03-07 18:32:34'),
+(40, '9b2d4700e13b5adffaa9cafd7eb858a315939d3fa3ffde5572e3ef75148cced1', 'b8bf8dbc6695c9934ab5c98058e4f15aa6325c61b62a54d271473a224ef6e3ae', NULL, NULL, 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36', 'Chrome', '145.0.0.0', 'macOS', 'desktop', 0, 'home_view', '/', NULL, NULL, 'http://localhost:8080/', 'localhost', NULL, NULL, NULL, NULL, NULL, NULL, '2026-03-07 18:33:33'),
+(41, '9b2d4700e13b5adffaa9cafd7eb858a315939d3fa3ffde5572e3ef75148cced1', 'b8bf8dbc6695c9934ab5c98058e4f15aa6325c61b62a54d271473a224ef6e3ae', NULL, NULL, 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36', 'Chrome', '145.0.0.0', 'macOS', 'desktop', 0, 'home_view', '/', NULL, NULL, 'http://localhost:8080/', 'localhost', NULL, NULL, NULL, NULL, NULL, NULL, '2026-03-07 18:33:53'),
+(42, '9b2d4700e13b5adffaa9cafd7eb858a315939d3fa3ffde5572e3ef75148cced1', 'b8bf8dbc6695c9934ab5c98058e4f15aa6325c61b62a54d271473a224ef6e3ae', NULL, NULL, 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36', 'Chrome', '145.0.0.0', 'macOS', 'desktop', 0, 'home_view', '/', NULL, NULL, 'http://localhost:8080/', 'localhost', NULL, NULL, NULL, NULL, NULL, NULL, '2026-03-07 18:38:15'),
+(43, '9b2d4700e13b5adffaa9cafd7eb858a315939d3fa3ffde5572e3ef75148cced1', 'b8bf8dbc6695c9934ab5c98058e4f15aa6325c61b62a54d271473a224ef6e3ae', NULL, NULL, 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36', 'Chrome', '145.0.0.0', 'macOS', 'desktop', 0, 'home_view', '/', NULL, NULL, 'http://localhost:8080/', 'localhost', NULL, NULL, NULL, NULL, NULL, NULL, '2026-03-07 18:38:24'),
+(44, '9b2d4700e13b5adffaa9cafd7eb858a315939d3fa3ffde5572e3ef75148cced1', 'b8bf8dbc6695c9934ab5c98058e4f15aa6325c61b62a54d271473a224ef6e3ae', NULL, NULL, 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36', 'Chrome', '145.0.0.0', 'macOS', 'desktop', 0, 'home_view', '/', NULL, NULL, 'http://localhost:8080/', 'localhost', NULL, NULL, NULL, NULL, NULL, NULL, '2026-03-07 18:41:10'),
+(45, '9b2d4700e13b5adffaa9cafd7eb858a315939d3fa3ffde5572e3ef75148cced1', 'b8bf8dbc6695c9934ab5c98058e4f15aa6325c61b62a54d271473a224ef6e3ae', NULL, NULL, 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36', 'Chrome', '145.0.0.0', 'macOS', 'desktop', 0, 'article_view', '/article/regreso-del-cine-imax-ganando', 4, 3, 'http://localhost:8080/article/regreso-del-cine-imax-ganando', 'localhost', NULL, NULL, NULL, NULL, NULL, NULL, '2026-03-07 18:41:13'),
+(46, '9b2d4700e13b5adffaa9cafd7eb858a315939d3fa3ffde5572e3ef75148cced1', 'b8bf8dbc6695c9934ab5c98058e4f15aa6325c61b62a54d271473a224ef6e3ae', NULL, NULL, 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36', 'Chrome', '145.0.0.0', 'macOS', 'desktop', 0, 'article_view', '/article/regreso-del-cine-imax-ganando', 4, 3, 'http://localhost:8080/article/regreso-del-cine-imax-ganando', 'localhost', NULL, NULL, NULL, NULL, NULL, NULL, '2026-03-07 18:42:55'),
+(47, '9b2d4700e13b5adffaa9cafd7eb858a315939d3fa3ffde5572e3ef75148cced1', 'b8bf8dbc6695c9934ab5c98058e4f15aa6325c61b62a54d271473a224ef6e3ae', NULL, NULL, 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36', 'Chrome', '145.0.0.0', 'macOS', 'desktop', 0, 'article_view', '/article/regreso-del-cine-imax-ganando', 4, 3, 'http://localhost:8080/article/regreso-del-cine-imax-ganando', 'localhost', NULL, NULL, NULL, NULL, NULL, NULL, '2026-03-07 18:43:18'),
+(48, '9b2d4700e13b5adffaa9cafd7eb858a315939d3fa3ffde5572e3ef75148cced1', 'b8bf8dbc6695c9934ab5c98058e4f15aa6325c61b62a54d271473a224ef6e3ae', NULL, NULL, 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36', 'Chrome', '145.0.0.0', 'macOS', 'desktop', 0, 'home_view', '/', NULL, NULL, 'http://localhost:8080/', 'localhost', NULL, NULL, NULL, NULL, NULL, NULL, '2026-03-07 18:46:38'),
+(49, '2647c991036a8ab6b11eb3d4976b1b9dfcaa460e5c7a56b6bec9362888d31f77', 'b8bf8dbc6695c9934ab5c98058e4f15aa6325c61b62a54d271473a224ef6e3ae', NULL, NULL, 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.5 Mobile/15E148 Safari/604.1', 'Safari', '18.5', 'iOS', 'mobile', 0, 'home_view', '/', NULL, NULL, 'http://localhost:8080/', 'localhost', NULL, NULL, NULL, NULL, NULL, NULL, '2026-03-07 18:46:49'),
+(50, '2647c991036a8ab6b11eb3d4976b1b9dfcaa460e5c7a56b6bec9362888d31f77', 'b8bf8dbc6695c9934ab5c98058e4f15aa6325c61b62a54d271473a224ef6e3ae', NULL, NULL, 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.5 Mobile/15E148 Safari/604.1', 'Safari', '18.5', 'iOS', 'mobile', 0, 'home_view', '/', NULL, NULL, 'http://localhost:8080/', 'localhost', NULL, NULL, NULL, NULL, NULL, NULL, '2026-03-07 18:52:03'),
+(51, '2647c991036a8ab6b11eb3d4976b1b9dfcaa460e5c7a56b6bec9362888d31f77', 'b8bf8dbc6695c9934ab5c98058e4f15aa6325c61b62a54d271473a224ef6e3ae', NULL, NULL, 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.5 Mobile/15E148 Safari/604.1', 'Safari', '18.5', 'iOS', 'mobile', 0, 'home_view', '/', NULL, NULL, 'http://localhost:8080/', 'localhost', NULL, NULL, NULL, NULL, NULL, NULL, '2026-03-07 18:55:02'),
+(52, '2647c991036a8ab6b11eb3d4976b1b9dfcaa460e5c7a56b6bec9362888d31f77', 'b8bf8dbc6695c9934ab5c98058e4f15aa6325c61b62a54d271473a224ef6e3ae', NULL, NULL, 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.5 Mobile/15E148 Safari/604.1', 'Safari', '18.5', 'iOS', 'mobile', 0, 'home_view', '/', NULL, NULL, 'http://localhost:8080/', 'localhost', NULL, NULL, NULL, NULL, NULL, NULL, '2026-03-07 18:56:10'),
+(53, '2647c991036a8ab6b11eb3d4976b1b9dfcaa460e5c7a56b6bec9362888d31f77', 'b8bf8dbc6695c9934ab5c98058e4f15aa6325c61b62a54d271473a224ef6e3ae', NULL, NULL, 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.5 Mobile/15E148 Safari/604.1', 'Safari', '18.5', 'iOS', 'mobile', 0, 'home_view', '/', NULL, NULL, 'http://localhost:8080/', 'localhost', NULL, NULL, NULL, NULL, NULL, NULL, '2026-03-07 18:57:40'),
+(54, '2647c991036a8ab6b11eb3d4976b1b9dfcaa460e5c7a56b6bec9362888d31f77', 'b8bf8dbc6695c9934ab5c98058e4f15aa6325c61b62a54d271473a224ef6e3ae', NULL, NULL, 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.5 Mobile/15E148 Safari/604.1', 'Safari', '18.5', 'iOS', 'mobile', 0, 'article_view', '/article/final-champions-league-previa-tactica', 2, 2, 'http://localhost:8080/article/final-champions-league-previa-tactica', 'localhost', NULL, NULL, NULL, NULL, NULL, NULL, '2026-03-07 18:57:46'),
+(55, '9b2d4700e13b5adffaa9cafd7eb858a315939d3fa3ffde5572e3ef75148cced1', 'b8bf8dbc6695c9934ab5c98058e4f15aa6325c61b62a54d271473a224ef6e3ae', NULL, NULL, 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36', 'Chrome', '145.0.0.0', 'macOS', 'desktop', 0, 'home_view', '/', NULL, NULL, 'http://localhost:8080/', 'localhost', NULL, NULL, NULL, NULL, NULL, NULL, '2026-03-07 18:58:18'),
+(56, '9b2d4700e13b5adffaa9cafd7eb858a315939d3fa3ffde5572e3ef75148cced1', 'b8bf8dbc6695c9934ab5c98058e4f15aa6325c61b62a54d271473a224ef6e3ae', NULL, NULL, 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36', 'Chrome', '145.0.0.0', 'macOS', 'desktop', 0, 'home_view', '/', NULL, NULL, 'http://localhost:8080/admin/articles/new', 'localhost', NULL, NULL, NULL, NULL, NULL, NULL, '2026-03-07 19:00:40'),
+(57, '9b2d4700e13b5adffaa9cafd7eb858a315939d3fa3ffde5572e3ef75148cced1', 'b8bf8dbc6695c9934ab5c98058e4f15aa6325c61b62a54d271473a224ef6e3ae', NULL, NULL, 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36', 'Chrome', '145.0.0.0', 'macOS', 'desktop', 0, 'article_view', '/article/juego-indie-ano-ascenso-nebula', 3, 4, 'http://localhost:8080/article/juego-indie-ano-ascenso-nebula', 'localhost', NULL, NULL, NULL, NULL, NULL, NULL, '2026-03-07 19:01:12'),
+(58, '9b2d4700e13b5adffaa9cafd7eb858a315939d3fa3ffde5572e3ef75148cced1', 'b8bf8dbc6695c9934ab5c98058e4f15aa6325c61b62a54d271473a224ef6e3ae', NULL, NULL, 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36', 'Chrome', '145.0.0.0', 'macOS', 'desktop', 0, 'article_view', '/article/futuro-ia-mas-alla-grandes-modelos-lenguaje', 1, 1, 'http://localhost:8080/article/futuro-ia-mas-alla-grandes-modelos-lenguaje', 'localhost', NULL, NULL, NULL, NULL, NULL, NULL, '2026-03-07 19:02:24'),
+(59, '9b2d4700e13b5adffaa9cafd7eb858a315939d3fa3ffde5572e3ef75148cced1', 'b8bf8dbc6695c9934ab5c98058e4f15aa6325c61b62a54d271473a224ef6e3ae', NULL, NULL, 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36', 'Chrome', '145.0.0.0', 'macOS', 'desktop', 0, 'home_view', '/', NULL, NULL, 'http://localhost:8080/article/futuro-ia-mas-alla-grandes-modelos-lenguaje', 'localhost', NULL, NULL, NULL, NULL, NULL, NULL, '2026-03-07 19:07:47'),
+(60, '9b2d4700e13b5adffaa9cafd7eb858a315939d3fa3ffde5572e3ef75148cced1', 'b8bf8dbc6695c9934ab5c98058e4f15aa6325c61b62a54d271473a224ef6e3ae', NULL, NULL, 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36', 'Chrome', '145.0.0.0', 'macOS', 'desktop', 0, 'home_view', '/', NULL, NULL, 'http://localhost:8080/', 'localhost', NULL, NULL, NULL, NULL, NULL, NULL, '2026-03-07 19:08:01'),
+(61, '9b2d4700e13b5adffaa9cafd7eb858a315939d3fa3ffde5572e3ef75148cced1', 'b8bf8dbc6695c9934ab5c98058e4f15aa6325c61b62a54d271473a224ef6e3ae', NULL, NULL, 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36', 'Chrome', '145.0.0.0', 'macOS', 'desktop', 0, 'article_view', '/article/futuro-ia-mas-alla-grandes-modelos-lenguaje', 1, 1, 'http://localhost:8080/articulo/futuro-ia-mas-alla-grandes-modelos-lenguaje', 'localhost', NULL, NULL, NULL, NULL, NULL, NULL, '2026-03-07 19:08:04'),
+(62, '9b2d4700e13b5adffaa9cafd7eb858a315939d3fa3ffde5572e3ef75148cced1', 'b8bf8dbc6695c9934ab5c98058e4f15aa6325c61b62a54d271473a224ef6e3ae', NULL, NULL, 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36', 'Chrome', '145.0.0.0', 'macOS', 'desktop', 0, 'home_view', '/', NULL, NULL, 'http://localhost:8080/articulo/', 'localhost', NULL, NULL, NULL, NULL, NULL, NULL, '2026-03-07 19:08:11'),
+(63, '9b2d4700e13b5adffaa9cafd7eb858a315939d3fa3ffde5572e3ef75148cced1', 'b8bf8dbc6695c9934ab5c98058e4f15aa6325c61b62a54d271473a224ef6e3ae', NULL, NULL, 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36', 'Chrome', '145.0.0.0', 'macOS', 'desktop', 0, 'home_view', '/', NULL, NULL, 'http://localhost:8080/articulo/', 'localhost', NULL, NULL, NULL, NULL, NULL, NULL, '2026-03-07 19:09:30'),
+(64, '9b2d4700e13b5adffaa9cafd7eb858a315939d3fa3ffde5572e3ef75148cced1', 'b8bf8dbc6695c9934ab5c98058e4f15aa6325c61b62a54d271473a224ef6e3ae', NULL, NULL, 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36', 'Chrome', '145.0.0.0', 'macOS', 'desktop', 0, 'home_view', '/', NULL, NULL, 'http://localhost:8080/admin/articles/new', 'localhost', NULL, NULL, NULL, NULL, NULL, NULL, '2026-03-07 19:10:07'),
+(65, '9b2d4700e13b5adffaa9cafd7eb858a315939d3fa3ffde5572e3ef75148cced1', 'b8bf8dbc6695c9934ab5c98058e4f15aa6325c61b62a54d271473a224ef6e3ae', NULL, NULL, 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36', 'Chrome', '145.0.0.0', 'macOS', 'desktop', 0, 'home_view', '/', NULL, NULL, 'http://localhost:8080/', 'localhost', NULL, NULL, NULL, NULL, NULL, NULL, '2026-03-07 19:11:58'),
+(66, '2647c991036a8ab6b11eb3d4976b1b9dfcaa460e5c7a56b6bec9362888d31f77', 'b8bf8dbc6695c9934ab5c98058e4f15aa6325c61b62a54d271473a224ef6e3ae', NULL, NULL, 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.5 Mobile/15E148 Safari/604.1', 'Safari', '18.5', 'iOS', 'mobile', 0, 'home_view', '/', NULL, NULL, 'http://localhost:8080/admin/articles/new', 'localhost', NULL, NULL, NULL, NULL, NULL, NULL, '2026-03-07 19:11:58'),
+(67, '9b2d4700e13b5adffaa9cafd7eb858a315939d3fa3ffde5572e3ef75148cced1', 'b8bf8dbc6695c9934ab5c98058e4f15aa6325c61b62a54d271473a224ef6e3ae', NULL, NULL, 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36', 'Chrome', '145.0.0.0', 'macOS', 'desktop', 0, 'home_view', '/', NULL, NULL, 'http://localhost:8080/admin/articles/new', 'localhost', NULL, NULL, NULL, NULL, NULL, NULL, '2026-03-07 19:27:19'),
+(68, '9b2d4700e13b5adffaa9cafd7eb858a315939d3fa3ffde5572e3ef75148cced1', 'b8bf8dbc6695c9934ab5c98058e4f15aa6325c61b62a54d271473a224ef6e3ae', NULL, NULL, 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36', 'Chrome', '145.0.0.0', 'macOS', 'desktop', 0, 'home_view', '/', NULL, NULL, 'http://localhost:8080/admin/articles/1/edit', 'localhost', NULL, NULL, NULL, NULL, NULL, NULL, '2026-03-07 19:28:33'),
+(69, '9b2d4700e13b5adffaa9cafd7eb858a315939d3fa3ffde5572e3ef75148cced1', 'b8bf8dbc6695c9934ab5c98058e4f15aa6325c61b62a54d271473a224ef6e3ae', NULL, NULL, 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36', 'Chrome', '145.0.0.0', 'macOS', 'desktop', 0, 'home_view', '/', NULL, NULL, 'http://localhost:8080/', 'localhost', NULL, NULL, NULL, NULL, NULL, NULL, '2026-03-09 00:46:52'),
+(70, '9b2d4700e13b5adffaa9cafd7eb858a315939d3fa3ffde5572e3ef75148cced1', 'b8bf8dbc6695c9934ab5c98058e4f15aa6325c61b62a54d271473a224ef6e3ae', NULL, NULL, 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36', 'Chrome', '145.0.0.0', 'macOS', 'desktop', 0, 'article_view', '/article/final-champions-league-previa-tactica', 2, 2, 'http://localhost:8080/articulo/final-champions-league-previa-tactica', 'localhost', NULL, NULL, NULL, NULL, NULL, NULL, '2026-03-09 00:47:07'),
+(71, '9b2d4700e13b5adffaa9cafd7eb858a315939d3fa3ffde5572e3ef75148cced1', 'b8bf8dbc6695c9934ab5c98058e4f15aa6325c61b62a54d271473a224ef6e3ae', NULL, NULL, 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36', 'Chrome', '145.0.0.0', 'macOS', 'desktop', 0, 'home_view', '/', NULL, NULL, 'http://localhost:8080/admin/articles/new', 'localhost', NULL, NULL, NULL, NULL, NULL, NULL, '2026-03-09 00:47:11'),
+(72, '9b2d4700e13b5adffaa9cafd7eb858a315939d3fa3ffde5572e3ef75148cced1', 'b8bf8dbc6695c9934ab5c98058e4f15aa6325c61b62a54d271473a224ef6e3ae', NULL, NULL, 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36', 'Chrome', '145.0.0.0', 'macOS', 'desktop', 0, 'home_view', '/', NULL, NULL, 'http://localhost:8080/admin/articles/new', 'localhost', NULL, NULL, NULL, NULL, NULL, NULL, '2026-03-09 01:00:52'),
+(73, '9b2d4700e13b5adffaa9cafd7eb858a315939d3fa3ffde5572e3ef75148cced1', 'b8bf8dbc6695c9934ab5c98058e4f15aa6325c61b62a54d271473a224ef6e3ae', NULL, NULL, 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36', 'Chrome', '145.0.0.0', 'macOS', 'desktop', 0, 'home_view', '/', NULL, NULL, 'http://localhost:8080/admin/articles/new', 'localhost', NULL, NULL, NULL, NULL, NULL, NULL, '2026-03-09 01:04:42'),
+(74, '9b2d4700e13b5adffaa9cafd7eb858a315939d3fa3ffde5572e3ef75148cced1', 'b8bf8dbc6695c9934ab5c98058e4f15aa6325c61b62a54d271473a224ef6e3ae', NULL, NULL, 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36', 'Chrome', '145.0.0.0', 'macOS', 'desktop', 0, 'home_view', '/', NULL, NULL, 'http://localhost:8080/admin/articles/new', 'localhost', NULL, NULL, NULL, NULL, NULL, NULL, '2026-03-09 01:12:00'),
+(75, '9b2d4700e13b5adffaa9cafd7eb858a315939d3fa3ffde5572e3ef75148cced1', 'b8bf8dbc6695c9934ab5c98058e4f15aa6325c61b62a54d271473a224ef6e3ae', NULL, NULL, 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36', 'Chrome', '145.0.0.0', 'macOS', 'desktop', 0, 'home_view', '/', NULL, NULL, 'http://localhost:8080/admin/articles/new', 'localhost', NULL, NULL, NULL, NULL, NULL, NULL, '2026-03-09 01:16:44'),
+(76, '9b2d4700e13b5adffaa9cafd7eb858a315939d3fa3ffde5572e3ef75148cced1', 'b8bf8dbc6695c9934ab5c98058e4f15aa6325c61b62a54d271473a224ef6e3ae', NULL, NULL, 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36', 'Chrome', '145.0.0.0', 'macOS', 'desktop', 0, 'home_view', '/', NULL, NULL, 'http://localhost:8080/admin/articles/new', 'localhost', NULL, NULL, NULL, NULL, NULL, NULL, '2026-03-09 01:16:55'),
+(77, '9b2d4700e13b5adffaa9cafd7eb858a315939d3fa3ffde5572e3ef75148cced1', 'b8bf8dbc6695c9934ab5c98058e4f15aa6325c61b62a54d271473a224ef6e3ae', NULL, NULL, 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36', 'Chrome', '145.0.0.0', 'macOS', 'desktop', 0, 'home_view', '/', NULL, NULL, 'http://localhost:8080/admin/articles/new', 'localhost', NULL, NULL, NULL, NULL, NULL, NULL, '2026-03-09 01:20:03'),
+(78, '9b2d4700e13b5adffaa9cafd7eb858a315939d3fa3ffde5572e3ef75148cced1', 'b8bf8dbc6695c9934ab5c98058e4f15aa6325c61b62a54d271473a224ef6e3ae', NULL, NULL, 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36', 'Chrome', '145.0.0.0', 'macOS', 'desktop', 0, 'home_view', '/', NULL, NULL, 'http://localhost:8080/admin/articles/new', 'localhost', NULL, NULL, NULL, NULL, NULL, NULL, '2026-03-09 01:21:50'),
+(79, '9b2d4700e13b5adffaa9cafd7eb858a315939d3fa3ffde5572e3ef75148cced1', 'b8bf8dbc6695c9934ab5c98058e4f15aa6325c61b62a54d271473a224ef6e3ae', NULL, NULL, 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36', 'Chrome', '145.0.0.0', 'macOS', 'desktop', 0, 'home_view', '/', NULL, NULL, 'http://localhost:8080/admin/articles/new', 'localhost', NULL, NULL, NULL, NULL, NULL, NULL, '2026-03-09 01:24:29'),
+(80, '9b2d4700e13b5adffaa9cafd7eb858a315939d3fa3ffde5572e3ef75148cced1', 'b8bf8dbc6695c9934ab5c98058e4f15aa6325c61b62a54d271473a224ef6e3ae', NULL, NULL, 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36', 'Chrome', '145.0.0.0', 'macOS', 'desktop', 0, 'home_view', '/', NULL, NULL, 'http://localhost:8080/admin/articles/new', 'localhost', NULL, NULL, NULL, NULL, NULL, NULL, '2026-03-09 01:28:47'),
+(81, '9b2d4700e13b5adffaa9cafd7eb858a315939d3fa3ffde5572e3ef75148cced1', 'b8bf8dbc6695c9934ab5c98058e4f15aa6325c61b62a54d271473a224ef6e3ae', NULL, NULL, 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36', 'Chrome', '145.0.0.0', 'macOS', 'desktop', 0, 'home_view', '/', NULL, NULL, 'http://localhost:8080/admin/articles/new', 'localhost', NULL, NULL, NULL, NULL, NULL, NULL, '2026-03-09 02:43:03'),
+(82, '9b2d4700e13b5adffaa9cafd7eb858a315939d3fa3ffde5572e3ef75148cced1', 'b8bf8dbc6695c9934ab5c98058e4f15aa6325c61b62a54d271473a224ef6e3ae', NULL, NULL, 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36', 'Chrome', '145.0.0.0', 'macOS', 'desktop', 0, 'home_view', '/', NULL, NULL, 'http://localhost:8080/admin/articles/11/edit', 'localhost', NULL, NULL, NULL, NULL, NULL, NULL, '2026-03-09 02:59:02'),
+(83, '9b2d4700e13b5adffaa9cafd7eb858a315939d3fa3ffde5572e3ef75148cced1', 'b8bf8dbc6695c9934ab5c98058e4f15aa6325c61b62a54d271473a224ef6e3ae', NULL, NULL, 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36', 'Chrome', '145.0.0.0', 'macOS', 'desktop', 0, 'home_view', '/', NULL, NULL, 'http://localhost:8080/', 'localhost', NULL, NULL, NULL, NULL, NULL, NULL, '2026-03-09 03:01:55'),
+(84, '9b2d4700e13b5adffaa9cafd7eb858a315939d3fa3ffde5572e3ef75148cced1', 'b8bf8dbc6695c9934ab5c98058e4f15aa6325c61b62a54d271473a224ef6e3ae', NULL, NULL, 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36', 'Chrome', '145.0.0.0', 'macOS', 'desktop', 0, 'article_view', '/article/por-que-para-chivas-el-clasico-contra-atlas-puede-ser-mas-importante-que-contra-america', 11, 2, 'http://localhost:8080/articulo/por-que-para-chivas-el-clasico-contra-atlas-puede-ser-mas-importante-que-contra-america', 'localhost', NULL, NULL, NULL, NULL, NULL, NULL, '2026-03-09 03:02:02');
 
 --
 -- Indexes for dumped tables
 --
+
+--
+-- Indexes for table `admin_login_codes`
+--
+ALTER TABLE `admin_login_codes`
+  ADD PRIMARY KEY (`id`),
+  ADD KEY `idx_email_expires` (`email`,`expires_at`),
+  ADD KEY `idx_expires` (`expires_at`);
 
 --
 -- Indexes for table `articles`
@@ -422,29 +594,50 @@ ALTER TABLE `tags`
 --
 ALTER TABLE `users`
   ADD PRIMARY KEY (`id`),
-  ADD UNIQUE KEY `email` (`email`);
+  ADD UNIQUE KEY `email` (`email`),
+  ADD KEY `fk_users_author` (`author_id`);
+
+--
+-- Indexes for table `visitors`
+--
+ALTER TABLE `visitors`
+  ADD PRIMARY KEY (`id`),
+  ADD KEY `idx_event_created` (`event_type`,`created_at`),
+  ADD KEY `idx_session` (`session_id`),
+  ADD KEY `idx_ip_hash` (`ip_hash`),
+  ADD KEY `idx_article` (`article_id`),
+  ADD KEY `idx_category` (`category_id`),
+  ADD KEY `idx_created` (`created_at`),
+  ADD KEY `idx_country_created` (`ip_country`,`created_at`),
+  ADD KEY `idx_user` (`user_id`);
 
 --
 -- AUTO_INCREMENT for dumped tables
 --
 
 --
+-- AUTO_INCREMENT for table `admin_login_codes`
+--
+ALTER TABLE `admin_login_codes`
+  MODIFY `id` int(10) UNSIGNED NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=4;
+
+--
 -- AUTO_INCREMENT for table `articles`
 --
 ALTER TABLE `articles`
-  MODIFY `id` int(10) UNSIGNED NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=11;
+  MODIFY `id` int(10) UNSIGNED NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=12;
 
 --
 -- AUTO_INCREMENT for table `article_blocks`
 --
 ALTER TABLE `article_blocks`
-  MODIFY `id` int(10) UNSIGNED NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=52;
+  MODIFY `id` int(10) UNSIGNED NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=60;
 
 --
 -- AUTO_INCREMENT for table `authors`
 --
 ALTER TABLE `authors`
-  MODIFY `id` int(10) UNSIGNED NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=11;
+  MODIFY `id` int(10) UNSIGNED NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=12;
 
 --
 -- AUTO_INCREMENT for table `categories`
@@ -486,7 +679,13 @@ ALTER TABLE `tags`
 -- AUTO_INCREMENT for table `users`
 --
 ALTER TABLE `users`
-  MODIFY `id` int(10) UNSIGNED NOT NULL AUTO_INCREMENT;
+  MODIFY `id` int(10) UNSIGNED NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=2;
+
+--
+-- AUTO_INCREMENT for table `visitors`
+--
+ALTER TABLE `visitors`
+  MODIFY `id` bigint(20) UNSIGNED NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=85;
 
 --
 -- Constraints for dumped tables
@@ -532,6 +731,20 @@ ALTER TABLE `media`
 --
 ALTER TABLE `subcategories`
   ADD CONSTRAINT `subcategories_ibfk_1` FOREIGN KEY (`category_id`) REFERENCES `categories` (`id`) ON DELETE CASCADE;
+
+--
+-- Constraints for table `users`
+--
+ALTER TABLE `users`
+  ADD CONSTRAINT `fk_users_author` FOREIGN KEY (`author_id`) REFERENCES `authors` (`id`) ON DELETE SET NULL;
+
+--
+-- Constraints for table `visitors`
+--
+ALTER TABLE `visitors`
+  ADD CONSTRAINT `visitors_ibfk_1` FOREIGN KEY (`article_id`) REFERENCES `articles` (`id`) ON DELETE SET NULL ON UPDATE CASCADE,
+  ADD CONSTRAINT `visitors_ibfk_2` FOREIGN KEY (`category_id`) REFERENCES `categories` (`id`) ON DELETE SET NULL ON UPDATE CASCADE,
+  ADD CONSTRAINT `visitors_ibfk_3` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE SET NULL ON UPDATE CASCADE;
 COMMIT;
 
 /*!40101 SET CHARACTER_SET_CLIENT=@OLD_CHARACTER_SET_CLIENT */;

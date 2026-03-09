@@ -1,7 +1,7 @@
 import { Helmet } from "react-helmet-async";
 
-const SITE_NAME = "InteliNota";
-const DEFAULT_TITLE = "InteliNota — Noticias de tecnología, deportes y cultura";
+const SITE_NAME = "INTELINOTA";
+const DEFAULT_TITLE = "INTELINOTA — Noticias de tecnología, deportes y cultura";
 const DEFAULT_DESCRIPTION =
   "El portal de noticias más inteligente. Últimas noticias de tecnología, deportes, videojuegos, cine y mundo.";
 const DEFAULT_KEYWORDS =
@@ -13,7 +13,7 @@ const SITE_URL =
     : "https://intelinota.com";
 
 export interface MetaHeadProps {
-  /** Page title — rendered as "{title} | InteliNota". Pass null to use the full default title as-is. */
+  /** Page title — rendered as "{title} | INTELINOTA". Pass null to use the full default title as-is. */
   title?: string | null;
   description?: string;
   keywords?: string;

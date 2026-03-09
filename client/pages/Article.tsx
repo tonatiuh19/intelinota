@@ -2,14 +2,14 @@ import { useParams, Link } from "react-router-dom";
 import {
   ArrowLeft,
   Clock,
-  MessageCircle,
   Share2,
   Twitter,
   Facebook,
-  Linkedin,
   Bookmark,
   TrendingUp,
   ExternalLink,
+  Flame,
+  ChevronRight,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -19,15 +19,17 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useEffect } from "react";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
 import {
-  fetchArticle,
-  fetchArticles,
+  fetchArticleFull,
   clearCurrent,
   selectCurrentArticle,
   selectDetailLoading,
   selectDetailError,
-  selectArticles,
+  selectCurrentBlocks,
+  selectCurrentRelated,
 } from "@/store/slices/articlesSlice";
+import { selectHomeTrending } from "@/store/slices/homeSlice";
 import MetaHead from "@/components/MetaHead";
+import type { ContentBlock } from "@shared/api";
 
 export default function Article() {
   const { slug } = useParams<{ slug: string }>();
@@ -36,12 +38,12 @@ export default function Article() {
   const article = useAppSelector(selectCurrentArticle);
   const loading = useAppSelector(selectDetailLoading);
   const error = useAppSelector(selectDetailError);
-  const allArticles = useAppSelector(selectArticles);
-  const related = allArticles.filter((a) => a.slug !== slug).slice(0, 3);
+  const blocks = useAppSelector(selectCurrentBlocks);
+  const related = useAppSelector(selectCurrentRelated);
+  const trending = useAppSelector(selectHomeTrending);
 
   useEffect(() => {
-    if (slug) dispatch(fetchArticle(slug));
-    if (allArticles.length === 0) dispatch(fetchArticles());
+    if (slug) dispatch(fetchArticleFull(slug));
     return () => {
       dispatch(clearCurrent());
     };
@@ -97,7 +99,7 @@ export default function Article() {
         articleSection={article.category_name}
       />
       <div className="container px-4 sm:px-6 lg:px-8 py-12 md:py-20">
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-16">
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-16">
           <div className="lg:col-span-8 space-y-8">
             <Link
               to="/"
@@ -120,64 +122,19 @@ export default function Article() {
                 </span>
               </div>
 
-              <h1 className="text-5xl md:text-7xl font-black italic tracking-tighter leading-[0.85] uppercase text-white drop-shadow-2xl">
+              <h1 className="text-3xl sm:text-5xl md:text-7xl font-black italic tracking-tighter leading-[0.85] uppercase text-white drop-shadow-2xl">
                 {article.title}
               </h1>
 
-              <p className="text-xl md:text-2xl text-muted-foreground leading-relaxed italic font-medium max-w-3xl">
+              <p className="text-base sm:text-xl md:text-2xl text-muted-foreground leading-relaxed italic font-medium max-w-3xl">
                 {article.excerpt}
               </p>
 
-              <div className="flex flex-col md:flex-row md:items-center justify-between gap-8 pt-8 border-t border-primary/10">
-                <div className="flex items-center gap-4">
-                  <Avatar className="h-14 w-14 ring-2 ring-primary/20 p-0.5 bg-muted">
-                    <AvatarImage
-                      src={`https://api.dicebear.com/7.x/avataaars/svg?seed=${article.author_name}`}
-                    />
-                    <AvatarFallback>{article.author_name[0]}</AvatarFallback>
-                  </Avatar>
-                  <div>
-                    <div className="font-black italic tracking-tighter uppercase text-lg">
-                      {article.author_name}
-                    </div>
-                    <div className="text-[10px] text-muted-foreground font-black uppercase tracking-widest flex items-center gap-2">
-                      {publishedDate}{" "}
-                      <span className="w-1 h-1 bg-muted-foreground rounded-full opacity-30" />{" "}
-                      {article.read_time_minutes} min
-                    </div>
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-3">
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="rounded-full hover:bg-primary/10 hover:text-primary"
-                  >
-                    <Twitter className="h-4 w-4" />
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="rounded-full hover:bg-primary/10 hover:text-primary"
-                  >
-                    <Facebook className="h-4 w-4" />
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="rounded-full hover:bg-primary/10 hover:text-primary"
-                  >
-                    <Share2 className="h-4 w-4" />
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="rounded-full hover:bg-primary/10 hover:text-primary"
-                  >
-                    <Bookmark className="h-4 w-4" />
-                  </Button>
-                </div>
+              <div className="flex items-center gap-3 pt-4 border-t border-primary/10 text-[10px] text-muted-foreground font-black uppercase tracking-widest">
+                <span>{publishedDate}</span>
+                <span className="w-1 h-1 bg-muted-foreground rounded-full opacity-30" />
+                <Clock className="h-3 w-3" />
+                <span>{article.read_time_minutes} min</span>
               </div>
             </div>
           </div>
@@ -198,72 +155,79 @@ export default function Article() {
       {/* Main Content Area */}
       <div className="container grid grid-cols-1 lg:grid-cols-12 gap-16">
         <div className="lg:col-span-8 space-y-10">
-          <div className="prose prose-invert prose-lg max-w-none prose-headings:font-black prose-headings:italic prose-headings:tracking-tighter prose-headings:uppercase prose-p:text-muted-foreground prose-p:leading-relaxed">
-            <p>
-              En un panorama en rápida evolución donde la inteligencia
-              artificial se ha convertido en la piedra angular del avance
-              tecnológico, el discurso ha cambiado. Ya no solo nos preguntamos
-              qué puede hacer la IA, sino cómo transformará el tejido mismo de
-              nuestra sociedad, industria y procesos cognitivos.
-            </p>
-            <p>
-              Los recientes avances en sistemas neuro-simbólicos han
-              proporcionado un puente entre las capacidades intuitivas de
-              reconocimiento de patrones del aprendizaje profundo y el
-              razonamiento lógico estructurado de la IA simbólica tradicional.
-              Este enfoque híbrido promete no solo modelos más potentes, sino
-              también más explicables y fiables.
-            </p>
-
-            <blockquote className="border-l-4 border-primary pl-6 py-4 my-8 italic text-2xl font-black tracking-tighter uppercase leading-tight bg-muted/30 rounded-r-xl pr-6">
-              "La próxima década no se tratará de escala, se tratará de la
-              razón. Necesitamos máquinas que no solo predigan el próximo token,
-              sino que comprendan los principios subyacentes del mundo."
-            </blockquote>
-
-            <h2 className="text-3xl mt-12 mb-6">
-              Rompiendo la Meseta de los LLM
-            </h2>
-            <p>
-              Muchos investigadores sostienen que hemos llegado a un punto de
-              rendimientos decrecientes con las simples leyes de escala. Añadir
-              más parámetros o más datos ya no produce las mejoras exponenciales
-              que vimos entre GPT-2 y GPT-3. En cambio, el enfoque se está
-              desplazando hacia la eficiencia, el razonamiento y la interacción
-              con el mundo real.
-            </p>
-            <img
-              src="https://images.unsplash.com/photo-1620712943543-bcc4688e7485?auto=format&fit=crop&q=80&w=1000"
-              alt="Visualización de IA"
-              className="rounded-2xl my-12 border border-primary/10 shadow-2xl"
-            />
-            <h2 className="text-3xl mt-12 mb-6">El Factor Humano</h2>
-            <p>
-              A medida que integramos estos sistemas en nuestros flujos de
-              trabajo creativos y profesionales, el énfasis en el diseño
-              centrado en el ser humano nunca ha sido más crítico. Intelinota
-              permanece a la vanguardia de la documentación de esta transición,
-              asegurando que nuestros lectores no sean solo testigos del cambio,
-              sino participantes informados en la revolución digital.
-            </p>
+          {/* Dynamic content blocks */}
+          <div className="space-y-8">
+            {blocks.map((block) => (
+              <ArticleBlock key={block.id} block={block} />
+            ))}
           </div>
 
-          <div className="flex flex-wrap gap-2 pt-8">
-            {[
-              "Artificial Intelligence",
-              "Future Tech",
-              "Research",
-              "Neuro-symbolic",
-              "Innovation",
-            ].map((tag) => (
-              <Badge
-                key={tag}
-                variant="secondary"
-                className="px-4 py-2 text-sm rounded-full font-bold uppercase tracking-tight italic bg-muted hover:bg-primary hover:text-primary-foreground transition-colors cursor-pointer"
-              >
-                #{tag}
-              </Badge>
-            ))}
+          <Separator className="my-12" />
+
+          {/* Author Card */}
+          <div className="flex flex-col sm:flex-row gap-6 items-start bg-muted/30 border border-primary/10 rounded-2xl p-6">
+            <Avatar className="h-16 w-16 ring-2 ring-primary/20 p-0.5 bg-muted flex-shrink-0">
+              <AvatarImage
+                src={`https://api.dicebear.com/7.x/avataaars/svg?seed=${article.author_name}`}
+              />
+              <AvatarFallback>{article.author_name[0]}</AvatarFallback>
+            </Avatar>
+            <div className="flex-1 space-y-2">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <div>
+                  <p className="text-[10px] text-muted-foreground font-black uppercase tracking-widest italic opacity-50">
+                    Escrito por
+                  </p>
+                  <h4 className="font-black italic tracking-tighter uppercase text-xl leading-none">
+                    {article.author_name}
+                  </h4>
+                </div>
+                <div className="flex items-center gap-1">
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="rounded-full hover:bg-primary/10 hover:text-primary h-8 w-8"
+                  >
+                    <Twitter className="h-3.5 w-3.5" />
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="rounded-full hover:bg-primary/10 hover:text-primary h-8 w-8"
+                  >
+                    <Facebook className="h-3.5 w-3.5" />
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="rounded-full hover:bg-primary/10 hover:text-primary h-8 w-8"
+                  >
+                    <Share2 className="h-3.5 w-3.5" />
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="rounded-full hover:bg-primary/10 hover:text-primary h-8 w-8"
+                  >
+                    <Bookmark className="h-3.5 w-3.5" />
+                  </Button>
+                </div>
+              </div>
+              <p className="text-xs text-muted-foreground leading-relaxed">
+                {article.author_name} es periodista de tecnología e innovación
+                en INTELINOTA.
+              </p>{" "}
+              <Link to={`/autor/${article.author_slug}`}>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="mt-1 px-0 font-bold uppercase tracking-tighter italic text-xs hover:text-primary hover:bg-transparent"
+                >
+                  Ver todas las historias{" "}
+                  <ExternalLink className="ml-1.5 h-3 w-3" />
+                </Button>
+              </Link>
+            </div>
           </div>
 
           <Separator className="my-12" />
@@ -271,16 +235,9 @@ export default function Article() {
           {/* Comments Section (Placeholder) */}
           <div className="space-y-8">
             <div className="flex items-center justify-between">
-              <h3 className="text-2xl font-black italic uppercase tracking-tighter flex items-center gap-2">
-                <MessageCircle className="h-6 w-6" />
-                Comentarios (24)
+              <h3 className="text-2xl font-black italic uppercase tracking-tighter">
+                Comentarios
               </h3>
-              <Button
-                variant="link"
-                className="font-bold uppercase tracking-widest text-xs"
-              >
-                Ver todos
-              </Button>
             </div>
 
             <div className="bg-muted/50 p-6 rounded-2xl border border-primary/5">
@@ -309,69 +266,178 @@ export default function Article() {
         </div>
 
         {/* Article Sidebar */}
-        <aside className="lg:col-span-4 space-y-12">
-          <div className="bg-muted/30 p-8 rounded-2xl border border-primary/5 space-y-6 sticky top-24">
-            <div className="flex items-center gap-2 text-primary mb-2">
-              <TrendingUp className="h-5 w-5" />
-              <h3 className="text-xl font-black italic uppercase tracking-tighter">
-                Recomendado para ti
-              </h3>
-            </div>
-            <div className="space-y-8">
-              {related.map((art) => (
-                <Link
-                  key={art.id}
-                  to={`/article/${art.slug}`}
-                  className="group block space-y-3"
-                >
-                  <div className="aspect-[16/9] rounded-lg overflow-hidden">
-                    <img
-                      src={art.image_url ?? "/placeholder.jpg"}
-                      alt={art.title}
-                      className="w-full h-full object-cover transition-transform group-hover:scale-110"
-                    />
-                  </div>
-                  <div className="space-y-1">
-                    <span className="text-[10px] font-bold text-primary uppercase tracking-widest">
-                      {art.category_name}
-                    </span>
-                    <h4 className="font-bold leading-tight group-hover:underline uppercase text-sm tracking-tight">
-                      {art.title}
-                    </h4>
-                    <p className="text-xs text-muted-foreground line-clamp-2">
-                      {art.excerpt}
-                    </p>
-                  </div>
-                </Link>
-              ))}
-            </div>
-
-            <Separator />
-
-            <div className="space-y-4">
-              <h4 className="text-sm font-black uppercase tracking-widest italic opacity-50">
-                Perfil del Autor
-              </h4>
-              <div className="space-y-3">
-                <p className="text-xs text-muted-foreground leading-relaxed">
-                  {article.author_name} es periodista de tecnología e innovación
-                  en InteliNota.
-                </p>
-                <Link to={`/author/${article.author_slug}`}>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="w-full font-bold uppercase tracking-tighter italic border border-primary/10 hover:bg-primary/5"
+        <aside className="lg:col-span-4 space-y-10">
+          {/* Recommended */}
+          <div className="sticky top-24 space-y-10">
+            <div className="bg-muted/30 rounded-2xl border border-primary/5 overflow-hidden">
+              <div className="flex items-center gap-2 text-primary px-6 pt-6 pb-4 border-b border-primary/5">
+                <TrendingUp className="h-4 w-4" />
+                <h3 className="text-sm font-black italic uppercase tracking-widest">
+                  Recomendado para ti
+                </h3>
+              </div>
+              <div className="divide-y divide-primary/5">
+                {related.slice(0, 6).map((art, idx) => (
+                  <Link
+                    key={art.id}
+                    to={`/articulo/${art.slug}`}
+                    className="group flex gap-4 p-4 hover:bg-muted/50 transition-colors"
                   >
-                    Ver todas las historias{" "}
-                    <ExternalLink className="ml-2 h-3 w-3" />
-                  </Button>
-                </Link>
+                    <div className="relative shrink-0 w-20 h-20 rounded-xl overflow-hidden bg-muted">
+                      {art.image_url ? (
+                        <img
+                          src={art.image_url}
+                          alt={art.title}
+                          className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110"
+                          loading="lazy"
+                          onError={(e) => {
+                            e.currentTarget.style.display = "none";
+                          }}
+                        />
+                      ) : (
+                        <div className="w-full h-full bg-gradient-to-br from-primary/20 to-primary/5 flex items-center justify-center">
+                          <span className="text-2xl font-black text-primary/30">
+                            {idx + 1}
+                          </span>
+                        </div>
+                      )}
+                      <div className="absolute inset-0 bg-gradient-to-t from-black/40 to-transparent" />
+                    </div>
+                    <div className="flex-1 min-w-0 space-y-1 py-1">
+                      <span className="text-[9px] font-black text-primary uppercase tracking-[0.2em]">
+                        {art.category_name}
+                      </span>
+                      <h4 className="text-xs font-bold leading-snug uppercase tracking-tight line-clamp-3 group-hover:text-primary transition-colors">
+                        {art.title}
+                      </h4>
+                      <p className="text-[10px] text-muted-foreground">
+                        {art.read_time_minutes} min de lectura
+                      </p>
+                    </div>
+                  </Link>
+                ))}
               </div>
             </div>
+
+            {/* Trending */}
+            {trending.length > 0 && (
+              <div className="bg-muted/30 rounded-2xl border border-primary/5 overflow-hidden">
+                <div className="flex items-center gap-2 text-orange-400 px-6 pt-6 pb-4 border-b border-primary/5">
+                  <Flame className="h-4 w-4" />
+                  <h3 className="text-sm font-black italic uppercase tracking-widest">
+                    Lo más leído
+                  </h3>
+                </div>
+                <div className="divide-y divide-primary/5">
+                  {trending
+                    .filter((a) => a.slug !== slug)
+                    .slice(0, 5)
+                    .map((art, idx) => (
+                      <Link
+                        key={art.id}
+                        to={`/articulo/${art.slug}`}
+                        className="group flex items-start gap-4 p-4 hover:bg-muted/50 transition-colors"
+                      >
+                        <span className="shrink-0 text-3xl font-black italic text-muted-foreground/20 leading-none pt-0.5 w-7 text-right">
+                          {idx + 1}
+                        </span>
+                        <div className="flex-1 min-w-0 space-y-1">
+                          <span className="text-[9px] font-black text-primary uppercase tracking-[0.2em]">
+                            {art.category_name}
+                          </span>
+                          <h4 className="text-xs font-bold leading-snug uppercase tracking-tight line-clamp-2 group-hover:text-primary transition-colors">
+                            {art.title}
+                          </h4>
+                          <div className="flex items-center gap-1 text-[10px] text-muted-foreground">
+                            <Clock className="h-2.5 w-2.5" />
+                            {art.read_time_minutes} min
+                            {art.view_count > 0 && (
+                              <>
+                                <span className="opacity-30">·</span>
+                                <span>
+                                  {art.view_count.toLocaleString()} vistas
+                                </span>
+                              </>
+                            )}
+                          </div>
+                        </div>
+                        <ChevronRight className="shrink-0 h-3.5 w-3.5 text-muted-foreground/30 mt-1 group-hover:text-primary transition-colors" />
+                      </Link>
+                    ))}
+                </div>
+              </div>
+            )}
           </div>
         </aside>
       </div>
     </article>
   );
+}
+
+// ── Article block renderer ────────────────────────────────────
+function ArticleBlock({ block }: { block: ContentBlock }) {
+  const data = block.data as Record<string, string>;
+  switch (block.type) {
+    case "html":
+      return (
+        <div
+          className="article-content max-w-none"
+          dangerouslySetInnerHTML={{ __html: data.html ?? "" }}
+        />
+      );
+    case "image":
+      return data.url ? (
+        <figure className="space-y-3">
+          <img
+            src={data.url}
+            alt={data.alt ?? ""}
+            className="rounded-2xl w-full object-cover border border-primary/10 shadow-2xl"
+            onError={(e) => (e.currentTarget.style.display = "none")}
+          />
+          {(data.caption || data.credit) && (
+            <figcaption className="text-xs text-muted-foreground text-center italic">
+              {data.caption}
+              {data.credit && (
+                <span className="ml-2 opacity-60">— {data.credit}</span>
+              )}
+            </figcaption>
+          )}
+        </figure>
+      ) : null;
+    case "youtube":
+      return data.video_id ? (
+        <figure className="space-y-3">
+          <div className="aspect-video rounded-2xl overflow-hidden bg-black/40 border border-primary/10">
+            <iframe
+              src={`https://www.youtube-nocookie.com/embed/${data.video_id}`}
+              className="w-full h-full"
+              allowFullScreen
+              title={data.caption ?? "Video"}
+            />
+          </div>
+          {data.caption && (
+            <figcaption className="text-xs text-muted-foreground text-center italic">
+              {data.caption}
+            </figcaption>
+          )}
+        </figure>
+      ) : null;
+    case "quote":
+      return (
+        <blockquote className="border-l-4 border-primary pl-6 py-4 my-4 bg-muted/30 rounded-r-xl pr-6">
+          <p className="italic text-xl font-black tracking-tighter uppercase leading-tight text-foreground">
+            &ldquo;{data.text}&rdquo;
+          </p>
+          {data.attribution && (
+            <footer className="text-xs text-muted-foreground mt-3 font-bold uppercase tracking-widest">
+              — {data.attribution}
+            </footer>
+          )}
+        </blockquote>
+      );
+    case "divider":
+      return <hr className="border-primary/10 my-4" />;
+    default:
+      return null;
+  }
 }

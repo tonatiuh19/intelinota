@@ -49,7 +49,7 @@ export interface Article {
   read_time_minutes: number;
   featured: boolean;
   trending: boolean;
-  status: "draft" | "published" | "archived";
+  status: "draft" | "published" | "archived" | "scheduled";
   published_at: string | null;
   view_count: number;
 }
@@ -173,3 +173,131 @@ export interface HomeData {
 }
 
 export type HomeResponse = ApiSuccess<HomeData>;
+
+// ── Admin types ──────────────────────────────────────────────
+
+export type AdminRole = "admin" | "author";
+
+export interface AdminUser {
+  id: number;
+  email: string;
+  name: string | null;
+  role: AdminRole;
+  author_id: number | null;
+  avatar_url: string | null;
+}
+
+// Extended author with linked user info (for admin management page)
+export interface AdminAuthor extends Author {
+  email: string | null;
+  user_id: number | null;
+  user_role: AdminRole | null;
+}
+
+// Article with full fields including draft/archived (admin sees all statuses)
+export interface AdminArticle extends Article {
+  created_at: string;
+  updated_at: string;
+}
+
+export interface DashboardStats {
+  total_articles: number;
+  published_articles: number;
+  draft_articles: number;
+  archived_articles: number;
+  total_views: number;
+  total_authors: number;
+  total_visitors_30d: number;
+  top_articles: Array<{
+    id: number;
+    slug: string;
+    title: string;
+    view_count: number;
+    category_name: string;
+  }>;
+  views_by_day: Array<{ date: string; count: number }>;
+}
+
+// ── Admin request payloads ───────────────────────────────────
+
+export interface RequestCodePayload {
+  email: string;
+}
+
+export interface VerifyCodePayload {
+  email: string;
+  code: string;
+}
+
+export interface UpsertArticlePayload {
+  title: string;
+  slug: string;
+  excerpt: string | null;
+  content: string | null;
+  category_id: number;
+  subcategory_id: number | null;
+  author_id: number;
+  image_url: string | null;
+  read_time_minutes: number;
+  featured: boolean;
+  trending: boolean;
+  status: "draft" | "published" | "archived" | "scheduled";
+  published_at: string | null;
+  blocks?: UpsertBlockPayload[];
+}
+
+export interface UpsertBlockPayload {
+  id?: number;
+  position: number;
+  type: ContentBlockType;
+  data: ContentBlockData;
+}
+
+export interface UpsertAuthorPayload {
+  name: string;
+  slug: string;
+  bio: string | null;
+  avatar_url: string | null;
+  twitter_handle: string | null;
+  email: string | null;
+  // If provided, creates/links a user account for this author
+  user_email?: string;
+  user_role?: AdminRole;
+}
+
+// ── Admin API response types ─────────────────────────────────
+
+export type AuthRequestCodeResponse = ApiSuccess<{ message: string }>;
+export type AuthVerifyCodeResponse = ApiSuccess<{
+  token: string;
+  user: AdminUser;
+}>;
+export type DashboardResponse = ApiSuccess<DashboardStats>;
+export type AdminArticlesResponse = PaginatedResponse<AdminArticle>;
+export type AdminArticleResponse = ApiSuccess<
+  AdminArticle & { blocks: ContentBlock[] }
+>;
+export type AdminAuthorsResponse = ApiSuccess<AdminAuthor[]>;
+export type AdminAuthorResponse = ApiSuccess<AdminAuthor>;
+
+// ── Public page consolidated response types ──────────────────
+
+export interface ArticleFullData {
+  article: Article;
+  blocks: ContentBlock[];
+  related: Article[];
+}
+export type ArticleFullResponse = ApiSuccess<ArticleFullData>;
+
+export interface CategoryPageData {
+  category: Category;
+  articles: Article[];
+  trending: Article[];
+  pagination: {
+    page: number;
+    limit: number;
+    total: number;
+    totalPages: number;
+  };
+}
+export type CategoryPageResponse = ApiSuccess<CategoryPageData>;
