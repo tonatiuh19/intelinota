@@ -5,9 +5,11 @@
 @tailwind utilities;
 
 @layer base {
+  /* `clip` (not `hidden`): hidden turns body into a scroll container and
+     breaks position: sticky for the header. */
   html,
   body {
-    overflow-x: hidden;
+    overflow-x: clip;
     max-width: 100vw;
   }
 
@@ -21,51 +23,51 @@
    * Default = "paper" light theme; `.dark` = warm charcoal.
    */
   :root {
-    --background: 40 33% 98%;
-    --foreground: 24 10% 8%;
+    /* Logo-derived: pure ink + paper, one electric-blue accent */
+    --background: 60 9% 98%;
+    --foreground: 240 6% 4%;
 
-    --muted: 40 18% 93%;
-    --muted-foreground: 24 6% 38%;
+    --muted: 240 5% 95%;
+    --muted-foreground: 240 4% 40%;
 
-    --accent: 40 18% 93%;
-    --accent-foreground: 24 10% 8%;
+    --accent: 240 5% 95%;
+    --accent-foreground: 240 6% 4%;
 
     --popover: 0 0% 100%;
-    --popover-foreground: 24 10% 8%;
+    --popover-foreground: 240 6% 4%;
 
-    --border: 30 10% 86%;
-    --input: 30 10% 86%;
-    --rule: 24 10% 8%;
+    --border: 240 6% 89%;
+    --input: 240 6% 87%;
+    --rule: 240 6% 4%;
 
     --card: 0 0% 100%;
-    --card-foreground: 24 10% 8%;
+    --card-foreground: 240 6% 4%;
 
-    /* Ink: primary text-like actions (buttons) */
-    --primary: 24 10% 8%;
-    --primary-foreground: 40 33% 98%;
+    --primary: 240 6% 4%;
+    --primary-foreground: 0 0% 100%;
 
-    --secondary: 40 18% 93%;
-    --secondary-foreground: 24 10% 8%;
+    --secondary: 240 5% 95%;
+    --secondary-foreground: 240 6% 4%;
 
-    /* Signal red — kickers, live, links, highlights */
-    --brand: 356 82% 46%;
+    /* Electric blue #2563FF */
+    --brand: 224 100% 57%;
     --brand-foreground: 0 0% 100%;
 
-    --destructive: 0 72% 45%;
+    --destructive: 0 72% 48%;
     --destructive-foreground: 0 0% 100%;
 
-    --ring: 356 82% 46%;
+    --ring: 224 100% 57%;
 
-    --radius: 0.375rem;
+    --radius: 0.5rem;
 
-    --sidebar-background: 40 25% 96%;
-    --sidebar-foreground: 24 10% 12%;
-    --sidebar-primary: 24 10% 8%;
-    --sidebar-primary-foreground: 40 33% 98%;
-    --sidebar-accent: 40 18% 91%;
-    --sidebar-accent-foreground: 24 10% 8%;
-    --sidebar-border: 30 10% 86%;
-    --sidebar-ring: 356 82% 46%;
+    --sidebar-background: 240 5% 97%;
+    --sidebar-foreground: 240 6% 10%;
+    --sidebar-primary: 240 6% 4%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 240 5% 93%;
+    --sidebar-accent-foreground: 240 6% 4%;
+    --sidebar-border: 240 6% 89%;
+    --sidebar-ring: 224 100% 57%;
 
     --motion-fast: 150ms;
     --motion-base: 350ms;
@@ -76,47 +78,48 @@
   }
 
   .dark {
-    --background: 24 8% 7%;
-    --foreground: 40 20% 92%;
+    --background: 240 8% 5%;
+    --foreground: 240 5% 96%;
 
-    --muted: 24 6% 12%;
-    --muted-foreground: 30 6% 62%;
+    --muted: 240 5% 10%;
+    --muted-foreground: 240 5% 64%;
 
-    --accent: 24 6% 14%;
-    --accent-foreground: 40 20% 92%;
+    --accent: 240 5% 12%;
+    --accent-foreground: 240 5% 96%;
 
-    --popover: 24 7% 10%;
-    --popover-foreground: 40 20% 92%;
+    --popover: 240 6% 8%;
+    --popover-foreground: 240 5% 96%;
 
-    --border: 24 5% 18%;
-    --input: 24 5% 20%;
-    --rule: 40 20% 92%;
+    --border: 240 4% 16%;
+    --input: 240 4% 18%;
+    --rule: 240 5% 96%;
 
-    --card: 24 7% 9%;
-    --card-foreground: 40 20% 92%;
+    --card: 240 6% 7%;
+    --card-foreground: 240 5% 96%;
 
-    --primary: 40 20% 94%;
-    --primary-foreground: 24 8% 7%;
+    --primary: 0 0% 100%;
+    --primary-foreground: 240 8% 5%;
 
-    --secondary: 24 6% 14%;
-    --secondary-foreground: 40 20% 92%;
+    --secondary: 240 5% 12%;
+    --secondary-foreground: 240 5% 96%;
 
-    --brand: 356 85% 60%;
+    /* Brighter blue for contrast on ink #4D7FFF */
+    --brand: 224 100% 65%;
     --brand-foreground: 0 0% 100%;
 
-    --destructive: 0 70% 55%;
+    --destructive: 0 72% 58%;
     --destructive-foreground: 0 0% 100%;
 
-    --ring: 356 85% 60%;
+    --ring: 224 100% 65%;
 
-    --sidebar-background: 24 8% 9%;
-    --sidebar-foreground: 40 20% 88%;
-    --sidebar-primary: 40 20% 94%;
-    --sidebar-primary-foreground: 24 8% 7%;
-    --sidebar-accent: 24 6% 14%;
-    --sidebar-accent-foreground: 40 20% 92%;
-    --sidebar-border: 24 5% 18%;
-    --sidebar-ring: 356 85% 60%;
+    --sidebar-background: 240 7% 7%;
+    --sidebar-foreground: 240 5% 88%;
+    --sidebar-primary: 0 0% 100%;
+    --sidebar-primary-foreground: 240 8% 5%;
+    --sidebar-accent: 240 5% 12%;
+    --sidebar-accent-foreground: 240 5% 96%;
+    --sidebar-border: 240 4% 16%;
+    --sidebar-ring: 224 100% 65%;
   }
 
   .dark img:not([data-no-dim]) {
@@ -369,6 +372,10 @@
 .group:hover .headline-link,
 .headline-link:hover {
   background-size: 100% 1px;
+}
+
+.mask-fade-r {
+  mask-image: linear-gradient(to right, black 88%, transparent);
 }
 
 .mask-fade-x {

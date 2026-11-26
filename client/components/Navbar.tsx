@@ -1,4 +1,4 @@
-import { Link, NavLink, useLocation } from "react-router-dom";
+import { Link, NavLink } from "react-router-dom";
 import { Search, Menu, Bookmark, Mail } from "lucide-react";
 import {
   Sheet,
@@ -64,11 +64,10 @@ export default function Navbar() {
   const dispatch = useAppDispatch();
   const categories = useAppSelector(selectCategories);
   const reduced = useReducedMotion();
-  const { pathname } = useLocation();
-  const isHome = pathname === "/";
   const { scrollY } = useScroll();
 
-  useMotionValueEvent(scrollY, "change", (y) => setCompact(y > 140));
+  // Compact as soon as the reader scrolls into the hero / content
+  useMotionValueEvent(scrollY, "change", (y) => setCompact(y > 48));
 
   useEffect(() => {
     dispatch(fetchHome());
@@ -113,62 +112,69 @@ export default function Navbar() {
         </div>
       </div>
 
-      {/* Masthead (home only, desktop) */}
-      {isHome && (
-        <div className="hidden bg-background md:block">
-          <div className="container flex flex-col items-center px-4 pb-4 pt-7 sm:px-6 lg:px-8">
-            <Link to="/" aria-label="INTELINOTA — Inicio">
-              <Logo className="h-12 lg:h-14" />
-            </Link>
-            <p className="mt-3 font-body text-sm italic text-muted-foreground">
-              Noticias que piensan. Tecnología, deportes y cultura.
-            </p>
-          </div>
-        </div>
-      )}
-
       <nav
         aria-label="Principal"
         className={cn(
-          "sticky top-0 z-50 w-full border-b bg-background/90 backdrop-blur-md supports-[backdrop-filter]:bg-background/75",
-          isHome && "md:border-t-2 md:border-t-rule",
+          "sticky top-0 z-50 w-full border-b transition-[background-color,box-shadow,border-color] duration-300 ease-editorial",
+          compact
+            ? "border-border/80 bg-background/95 shadow-[0_8px_24px_-12px_rgb(0_0_0/0.18)] backdrop-blur-xl supports-[backdrop-filter]:bg-background/85"
+            : "border-transparent bg-background",
         )}
       >
-        <div className="container flex h-14 items-center gap-3 px-4 sm:px-6 lg:px-8">
+        <div
+          className={cn(
+            "container flex items-center gap-4 px-4 transition-[height] duration-300 ease-editorial sm:px-6 lg:gap-8 lg:px-8",
+            compact ? "h-14" : "h-16 md:h-[76px]",
+          )}
+        >
+          {/* Logo — always visible, scales down in compact mode */}
           <Link
             to="/"
             aria-label="INTELINOTA — Inicio"
-            className={cn(
-              "flex shrink-0 items-center transition-all duration-300 ease-editorial",
-              isHome && !compact ? "md:pointer-events-none md:w-0 md:opacity-0" : "md:w-auto md:opacity-100",
-            )}
+            className="group relative flex shrink-0 items-center"
           >
-            <Logo className="h-5 sm:h-6" />
+            <span
+              className={cn(
+                "block origin-left transition-transform duration-300 ease-editorial",
+                compact ? "scale-[0.82]" : "scale-100",
+              )}
+            >
+              <Logo className="h-6 md:h-7" />
+            </span>
+            <span
+              aria-hidden
+              className="absolute -bottom-1.5 left-0 h-[3px] w-0 bg-brand transition-all duration-300 ease-editorial group-hover:w-8"
+            />
           </Link>
 
+          <span aria-hidden className="hidden h-6 w-px bg-border md:block" />
+
           {/* Sections */}
-          <div className="mask-fade-x hidden min-w-0 flex-1 overflow-x-auto md:block">
-            <ul className={cn("flex items-center gap-1 whitespace-nowrap px-6", isHome && !compact && "md:justify-center")}>
+          <div className="mask-fade-r hidden min-w-0 flex-1 overflow-x-auto md:block">
+            <ul className="flex items-center gap-0.5 whitespace-nowrap pr-6">
               {sectionLinks.map((s) => (
                 <li key={s.id}>
                   <NavLink
                     to={s.to}
                     className={({ isActive }) =>
                       cn(
-                        "relative inline-flex h-14 items-center px-3 text-[13px] font-semibold tracking-wide transition-colors hover:text-foreground",
-                        isActive ? "text-foreground" : "text-muted-foreground",
+                        "relative inline-flex h-10 items-center rounded-full px-3.5 text-[13px] font-semibold tracking-wide transition-colors",
+                        isActive
+                          ? "text-foreground"
+                          : "text-muted-foreground hover:bg-muted hover:text-foreground",
                       )
                     }
                   >
                     {({ isActive }) => (
                       <>
-                        {s.name}
                         {isActive && (
                           <motion.span
-                            layoutId="nav-underline"
-                            className="absolute inset-x-3 bottom-0 h-0.5 bg-brand"
+                            layoutId="nav-pill"
+                            className="absolute inset-0 rounded-full bg-brand/10 ring-1 ring-brand/25"
+                            transition={{ type: "spring", stiffness: 420, damping: 34 }}
                           />
                         )}
+                        <span className="relative">{s.name}</span>
                       </>
                     )}
                   </NavLink>
@@ -181,11 +187,11 @@ export default function Navbar() {
             <button
               type="button"
               onClick={openSearch}
-              className="hidden h-9 items-center gap-2 rounded-full border px-3 text-sm text-muted-foreground transition-colors hover:border-foreground/40 hover:text-foreground lg:inline-flex"
+              className="hidden h-10 items-center gap-2 rounded-full border bg-muted/40 px-3.5 text-sm text-muted-foreground transition-colors hover:border-brand/50 hover:text-foreground lg:inline-flex"
             >
               <Search className="h-4 w-4" />
               Buscar
-              <kbd className="ml-2 rounded border bg-muted px-1.5 font-sans text-[10px]">⌘K</kbd>
+              <kbd className="ml-3 rounded border bg-background px-1.5 font-sans text-[10px]">⌘K</kbd>
             </button>
             <IconButton label="Buscar" onClick={openSearch} className="lg:hidden">
               <Search className="h-5 w-5" />
@@ -203,11 +209,25 @@ export default function Navbar() {
               )}
             </Link>
             <ThemeToggle />
+            <Link
+              to="/#newsletter"
+              className="ml-2 hidden h-10 items-center rounded-full bg-foreground px-4 text-sm font-semibold text-background transition-colors hover:bg-brand hover:text-brand-foreground xl:inline-flex"
+            >
+              Suscríbete
+            </Link>
             <IconButton label="Abrir menú" onClick={() => setIsMenuOpen(true)} className="md:hidden">
               <Menu className="h-5 w-5" />
             </IconButton>
           </div>
         </div>
+        {/* Reading-line accent that appears in compact mode */}
+        <span
+          aria-hidden
+          className={cn(
+            "absolute inset-x-0 -bottom-px h-px origin-left bg-gradient-to-r from-brand via-brand/40 to-transparent transition-transform duration-500 ease-editorial",
+            compact ? "scale-x-100" : "scale-x-0",
+          )}
+        />
       </nav>
 
       <SearchOverlay />
