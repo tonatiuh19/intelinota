@@ -17,6 +17,7 @@ import adminMediaReducer from "./slices/adminMediaSlice";
 import uiReducer from "./slices/uiSlice";
 import searchReducer from "./slices/searchSlice";
 import tagsReducer from "./slices/tagsSlice";
+import searchPageReducer from "./slices/searchPageSlice";
 import revisionsReducer from "./slices/revisionsSlice";
 import adminAuditReducer from "./slices/adminAuditSlice";
 import type { RootState } from "./types";
@@ -41,6 +42,7 @@ export const store = configureStore({
     ui: uiReducer,
     search: searchReducer,
     tags: tagsReducer,
+    searchPage: searchPageReducer,
     revisions: revisionsReducer,
     adminAudit: adminAuditReducer,
   },

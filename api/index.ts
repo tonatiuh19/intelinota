@@ -517,10 +517,7 @@ const handleGetArticles: RequestHandler = async (req, res) => {
     const conditions: string[] = ["a.status = 'published'"];
     const params: (string | number)[] = [];
 
-    if (req.query.category) {
-      conditions.push("c.slug = ?");
-      params.push(String(req.query.category));
-    }
+    const categoryParam = req.query.category ? String(req.query.category) : "";
     if (req.query.subcategory) {
       conditions.push("sc.slug = ?");
       params.push(String(req.query.subcategory));
@@ -531,10 +528,40 @@ const handleGetArticles: RequestHandler = async (req, res) => {
     if (req.query.trending === "1") {
       conditions.push("a.trending = 1");
     }
-    if (req.query.search) {
-      conditions.push("(a.title LIKE ? ESCAPE '\\\\' OR a.excerpt LIKE ? ESCAPE '\\\\')");
-      const q = `%${escapeLike(String(req.query.search).slice(0, 100))}%`;
-      params.push(q, q);
+    // Free-text: title, excerpt or author name
+    const searchTerm = req.query.search ? String(req.query.search).trim().slice(0, 100) : "";
+    const likeTerm = `%${escapeLike(searchTerm)}%`;
+    if (searchTerm) {
+      conditions.push(
+        "(a.title LIKE ? ESCAPE '\\\\' OR a.excerpt LIKE ? ESCAPE '\\\\' OR au.name LIKE ? ESCAPE '\\\\')",
+      );
+      params.push(likeTerm, likeTerm, likeTerm);
+    }
+    // Facet filters (kept separate so facet counts can ignore their own filter)
+    const facetConds: Record<"category" | "author", { sql: string; val: string } | null> = {
+      category: null,
+      author: null,
+    };
+    if (typeof req.query.author === "string" && req.query.author) {
+      facetConds.author = { sql: "au.slug = ?", val: req.query.author.slice(0, 120) };
+    }
+    if (typeof req.query.tag === "string" && req.query.tag) {
+      conditions.push(
+        "EXISTS (SELECT 1 FROM article_tags at JOIN tags t ON t.id = at.tag_id WHERE at.article_id = a.id AND t.slug = ?)",
+      );
+      params.push(req.query.tag.slice(0, 100));
+    }
+    const SINCE: Record<string, string> = { "24h": "1 DAY", "7d": "7 DAY", "30d": "30 DAY", "1y": "365 DAY" };
+    if (typeof req.query.since === "string" && SINCE[req.query.since]) {
+      conditions.push(`a.published_at >= NOW() - INTERVAL ${SINCE[req.query.since]}`);
+    }
+    const READ: Record<string, string> = {
+      short: "a.read_time_minutes <= 4",
+      medium: "a.read_time_minutes BETWEEN 5 AND 9",
+      long: "a.read_time_minutes >= 10",
+    };
+    if (typeof req.query.read === "string" && READ[req.query.read]) {
+      conditions.push(READ[req.query.read]);
     }
     if (req.query.slugs) {
       const slugs = String(req.query.slugs)
@@ -548,15 +575,51 @@ const handleGetArticles: RequestHandler = async (req, res) => {
       }
     }
 
+    if (categoryParam) facetConds.category = { sql: "c.slug = ?", val: categoryParam };
+
+    const baseConds = [...conditions];
+    const baseParams = [...params];
+    for (const f of Object.values(facetConds)) {
+      if (f) {
+        conditions.push(f.sql);
+        params.push(f.val);
+      }
+    }
     const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
 
-    const countSql = `
-      SELECT COUNT(*) AS total
+    const FROM = `
       FROM articles a
       JOIN categories c ON c.id = a.category_id
       LEFT JOIN subcategories sc ON sc.id = a.subcategory_id
-      ${where}
+      JOIN authors au ON au.id = a.author_id
     `;
+    const countSql = `SELECT COUNT(*) AS total ${FROM} ${where}`;
+
+    // Ordering: relevance (title > excerpt > author match), recent, popular, oldest
+    const sort = String(req.query.sort ?? (searchTerm ? "relevance" : "recent"));
+    let orderSql = "a.published_at DESC";
+    const orderParams: string[] = [];
+    if (sort === "popular") orderSql = "a.view_count DESC, a.published_at DESC";
+    else if (sort === "oldest") orderSql = "a.published_at ASC";
+    else if (sort === "relevance" && searchTerm) {
+      orderSql =
+        "((a.title LIKE ? ESCAPE '\\\\') * 3 + (a.excerpt LIKE ? ESCAPE '\\\\') * 2 + (au.name LIKE ? ESCAPE '\\\\')) DESC, a.published_at DESC";
+      orderParams.push(likeTerm, likeTerm, likeTerm);
+    }
+
+    // Facet counts: each facet ignores its own filter so options stay visible
+    const facetWhere = (skip: "category" | "author") => {
+      const c = [...baseConds];
+      const p: (string | number)[] = [...baseParams];
+      for (const [k, f] of Object.entries(facetConds)) {
+        if (f && k !== skip) {
+          c.push(f.sql);
+          p.push(f.val);
+        }
+      }
+      return { sql: `WHERE ${c.join(" AND ")}`, params: p };
+    };
+    const wantFacets = req.query.facets === "1";
     const dataSql = `
       SELECT
         a.id, a.slug, a.title, a.excerpt,
@@ -565,18 +628,31 @@ const handleGetArticles: RequestHandler = async (req, res) => {
         a.author_id, au.name AS author_name, au.slug AS author_slug,
         a.image_url, a.read_time_minutes, a.featured, a.trending,
         a.status, a.published_at, a.view_count
-      FROM articles a
-      JOIN categories c ON c.id = a.category_id
-      LEFT JOIN subcategories sc ON sc.id = a.subcategory_id
-      JOIN authors au ON au.id = a.author_id
+      ${FROM}
       ${where}
-      ORDER BY a.published_at DESC
+      ORDER BY ${orderSql}
       LIMIT ? OFFSET ?
     `;
 
-    const [[countRow], [rows]] = await Promise.all([
+    const catF = facetWhere("category");
+    const autF = facetWhere("author");
+    const [[countRow], [rows], facetCats, facetAuthors] = await Promise.all([
       getPool().query<RowDataPacket[]>(countSql, params),
-      getPool().query<RowDataPacket[]>(dataSql, [...params, limit, offset]),
+      getPool().query<RowDataPacket[]>(dataSql, [...params, ...orderParams, limit, offset]),
+      wantFacets
+        ? getPool().query<RowDataPacket[]>(
+            `SELECT c.slug, c.name, COUNT(*) AS count ${FROM} ${catF.sql}
+             GROUP BY c.slug, c.name ORDER BY count DESC, c.name`,
+            catF.params,
+          )
+        : Promise.resolve(null),
+      wantFacets
+        ? getPool().query<RowDataPacket[]>(
+            `SELECT au.slug, au.name, COUNT(*) AS count ${FROM} ${autF.sql}
+             GROUP BY au.slug, au.name ORDER BY count DESC, au.name LIMIT 20`,
+            autF.params,
+          )
+        : Promise.resolve(null),
     ]);
 
     const total = (countRow as RowDataPacket[])[0].total as number;
@@ -584,6 +660,14 @@ const handleGetArticles: RequestHandler = async (req, res) => {
     res.json({
       success: true,
       data: rows,
+      ...(wantFacets
+        ? {
+            facets: {
+              categories: (facetCats?.[0] ?? []).map((r) => ({ slug: r.slug, name: r.name, count: Number(r.count) })),
+              authors: (facetAuthors?.[0] ?? []).map((r) => ({ slug: r.slug, name: r.name, count: Number(r.count) })),
+            },
+          }
+        : {}),
       pagination: {
         page,
         limit,
