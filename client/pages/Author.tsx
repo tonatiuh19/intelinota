@@ -1,5 +1,13 @@
 import { Link } from "react-router-dom";
-import { useEffect } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { AnimatePresence, motion } from "framer-motion";
+import { ChevronRight } from "lucide-react";
+import OverlayCard from "@/components/OverlayCard";
+import NewsletterForm from "@/components/NewsletterForm";
+import { formatRelative } from "@/lib/format";
+import { categoryUrlPath } from "@/lib/categorySlugs";
+import { useReducedMotion } from "@/hooks/use-reduced-motion";
+import { cn } from "@/lib/utils";
 import { useParams } from "react-router-dom";
 import {
   Twitter,
@@ -24,7 +32,6 @@ import {
 import { parseSocialLinks } from "@/lib/socialLinks";
 import MetaHead from "@/components/MetaHead";
 import ArticleCard from "@/components/ArticleCard";
-import StaggerGrid, { StaggerItem } from "@/components/motion/StaggerGrid";
 import {
   buildBreadcrumbJsonLd,
   buildPersonJsonLd,
@@ -46,6 +53,29 @@ export default function AuthorPage() {
       dispatch(clearAuthor());
     };
   }, [dispatch, slug]);
+
+  const [section, setSection] = useState<string | null>(null);
+  const reduced = useReducedMotion();
+
+  const stats = useMemo(() => {
+    const list = author?.articles ?? [];
+    const map = new Map<string, { name: string; slug: string; count: number }>();
+    for (const a of list) {
+      const cur = map.get(a.category_slug) ?? { name: a.category_name, slug: a.category_slug, count: 0 };
+      cur.count += 1;
+      map.set(a.category_slug, cur);
+    }
+    return {
+      count: list.length,
+      minutes: list.reduce((n, a) => n + (a.read_time_minutes || 0), 0),
+      sections: Array.from(map.values()).sort((x, y) => y.count - x.count),
+      latest: list[0]?.published_at ?? null,
+    };
+  }, [author]);
+
+  const visible = (author?.articles ?? [])
+    .slice(1)
+    .filter((a) => !section || a.category_name === section);
 
   if (loading) {
     return (
@@ -123,25 +153,54 @@ export default function AuthorPage() {
         )}
       />
 
-      <header className="container px-4 pt-10 sm:px-6 sm:pt-14 lg:px-8">
-        <div className="flex flex-col gap-6 border-b-2 border-rule pb-8 sm:flex-row sm:items-end">
-          <Avatar className="h-24 w-24 shrink-0 sm:h-28 sm:w-28">
-            <AvatarImage src={author.avatar_url ?? undefined} alt={author.name} />
-            <AvatarFallback className="font-display text-3xl font-bold">
-              {author.name[0]}
-            </AvatarFallback>
-          </Avatar>
-          <div className="min-w-0 flex-1 space-y-3">
-            <p className="kicker">Autor</p>
-            <h1 className="font-display text-display-xl font-bold">{author.name}</h1>
-            {author.bio && (
-              <p className="max-w-2xl font-body text-lg leading-relaxed text-muted-foreground">
-                {author.bio}
-              </p>
-            )}
-          </div>
-          {socialLinks.length > 0 && (
-            <div className="flex flex-wrap gap-1">
+      {/* ── Profile band: identity + stats (left), latest story (right) ── */}
+      <header className="container px-4 pt-6 sm:px-6 sm:pt-10 lg:px-8">
+        <nav aria-label="Ruta" className="flex items-center gap-1.5 text-xs text-muted-foreground">
+          <Link to="/" className="inline-flex h-8 items-center hover:text-foreground">Portada</Link>
+          <ChevronRight className="h-3 w-3" />
+          <Link to="/autores" className="inline-flex h-8 items-center hover:text-foreground">Autores</Link>
+          <ChevronRight className="h-3 w-3" />
+          <span className="kicker">{author.name}</span>
+        </nav>
+
+        <div className="mt-3 grid grid-cols-1 gap-8 border-b pb-10 lg:grid-cols-12 lg:items-stretch lg:gap-10">
+          <div className="flex flex-col lg:col-span-7">
+            <div className="flex items-center gap-5">
+              <div className="relative shrink-0">
+                <Avatar className="h-20 w-20 ring-4 ring-background sm:h-24 sm:w-24">
+                  <AvatarImage src={author.avatar_url ?? undefined} alt={author.name} />
+                  <AvatarFallback className="bg-foreground font-display text-3xl font-bold text-background">
+                    {author.name[0]}
+                  </AvatarFallback>
+                </Avatar>
+                <span aria-hidden className="absolute -bottom-1 -right-1 h-6 w-6 rounded-full border-4 border-background bg-brand" />
+              </div>
+              <div className="min-w-0">
+                <p className="kicker">Autor · INTELINOTA</p>
+                <h1 className="mt-1 font-display text-[2.25rem] font-bold leading-none tracking-[-0.02em] sm:text-5xl">
+                  {author.name}
+                </h1>
+              </div>
+            </div>
+
+            <p className="mt-6 max-w-2xl font-body text-lg leading-relaxed text-muted-foreground">
+              {author.bio || `${author.name} escribe para INTELINOTA.`}
+            </p>
+
+            <dl className="mt-6 grid grid-cols-3 divide-x rounded-xl border bg-card">
+              {[
+                { k: "Historias", v: String(stats.count) },
+                { k: "Minutos", v: String(stats.minutes) },
+                { k: "Secciones", v: String(stats.sections.length) },
+              ].map((x) => (
+                <div key={x.k} className="px-4 py-3 sm:px-5 sm:py-4">
+                  <dt className="font-sans text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">{x.k}</dt>
+                  <dd className="mt-1 font-display text-2xl font-bold tabular-nums sm:text-3xl">{x.v}</dd>
+                </div>
+              ))}
+            </dl>
+
+            <div className="mt-6 flex flex-wrap items-center gap-2 lg:mt-auto lg:pt-6">
               {socialLinks.map(({ href, icon: Icon, label }) => (
                 <a
                   key={label}
@@ -149,35 +208,118 @@ export default function AuthorPage() {
                   target="_blank"
                   rel="noopener noreferrer"
                   aria-label={label}
-                  className="inline-flex h-10 w-10 items-center justify-center rounded-full border text-muted-foreground transition-colors hover:border-foreground hover:text-foreground"
+                  className="inline-flex h-10 w-10 items-center justify-center rounded-full border text-muted-foreground transition-colors hover:border-brand hover:text-brand"
                 >
                   <Icon className="h-4 w-4" />
                 </a>
               ))}
+              {stats.latest && (
+                <span className="ml-auto font-sans text-xs text-muted-foreground">
+                  Última publicación: {formatRelative(stats.latest)}
+                </span>
+              )}
+            </div>
+          </div>
+
+          {author.articles[0] && (
+            <div className="lg:col-span-5">
+              <OverlayCard article={author.articles[0]} size="lg" label="Lo más reciente" priority className="lg:min-h-[420px]" />
             </div>
           )}
         </div>
       </header>
 
-      <section className="container mt-10 px-4 sm:px-6 lg:px-8" aria-labelledby="author-stories">
-        <h2 id="author-stories" className="mb-8 font-display text-2xl font-bold">
-          Historias <span className="text-base font-normal text-muted-foreground">({author.articles.length})</span>
-        </h2>
+      {/* ── Stories + sidebar ─────────────────────────────────── */}
+      <div className="container mt-10 grid grid-cols-1 gap-12 px-4 sm:px-6 lg:grid-cols-12 lg:px-8">
+        <section className="lg:col-span-8" aria-labelledby="author-stories">
+          <div className="rule-top flex flex-col gap-4 pt-3 sm:flex-row sm:items-center sm:justify-between">
+            <h2 id="author-stories" className="font-display text-xl font-bold">
+              Historias de {author.name.split(" ")[0]}
+            </h2>
+            {stats.sections.length > 1 && (
+              <div role="tablist" aria-label="Filtrar por sección" className="-mx-4 flex gap-2 overflow-x-auto px-4 [scrollbar-width:none] sm:mx-0 sm:px-0">
+                {[null, ...stats.sections.map((x) => x.name)].map((name) => {
+                  const active = section === name;
+                  return (
+                    <button
+                      key={name ?? "__all"}
+                      type="button"
+                      role="tab"
+                      aria-selected={active}
+                      onClick={() => setSection(name)}
+                      className={cn(
+                        "inline-flex h-10 shrink-0 items-center rounded-full border px-4 text-sm font-semibold transition-colors",
+                        active ? "border-brand bg-brand text-brand-foreground" : "text-muted-foreground hover:border-foreground/40 hover:text-foreground",
+                      )}
+                    >
+                      {name ?? "Todas"}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
 
-        {author.articles.length === 0 ? (
-          <p className="py-12 text-center font-body text-muted-foreground">
-            Este autor aún no tiene artículos publicados.
-          </p>
-        ) : (
-          <StaggerGrid className="grid grid-cols-1 gap-x-8 gap-y-10 sm:grid-cols-2 lg:grid-cols-3">
-            {author.articles.map((article) => (
-              <StaggerItem key={article.id}>
-                <ArticleCard article={article} variant="grid" />
-              </StaggerItem>
-            ))}
-          </StaggerGrid>
-        )}
-      </section>
+          {visible.length === 0 ? (
+            <p className="py-12 text-center font-body text-muted-foreground">
+              {stats.count === 0
+                ? "Este autor aún no tiene artículos publicados."
+                : section
+                  ? `No hay más historias en ${section}.`
+                  : "Por ahora, su historia más reciente es la de arriba. Pronto habrá más."}
+            </p>
+          ) : (
+            <AnimatePresence mode="wait">
+              <motion.div
+                key={section ?? "all"}
+                initial={reduced ? false : { opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0 }}
+                className="divide-y"
+              >
+                {visible.map((article) => (
+                  <ArticleCard key={article.id} article={article} variant="horizontal" className="py-6" />
+                ))}
+              </motion.div>
+            </AnimatePresence>
+          )}
+        </section>
+
+        <aside className="lg:col-span-4">
+          <div className="space-y-10 lg:sticky lg:top-24">
+            {stats.sections.length > 0 && (
+              <section aria-labelledby="covers-h">
+                <h2 id="covers-h" className="rule-top mb-4 pt-3 font-display text-xl font-bold">Escribe sobre</h2>
+                <ul className="space-y-3">
+                  {stats.sections.map((x) => (
+                    <li key={x.slug}>
+                      <Link to={categoryUrlPath(x.slug)} className="group block">
+                        <div className="flex items-baseline justify-between text-sm">
+                          <span className="font-semibold group-hover:text-brand">{x.name}</span>
+                          <span className="tabular-nums text-muted-foreground">{x.count}</span>
+                        </div>
+                        <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-muted">
+                          <div className="h-full rounded-full bg-brand" style={{ width: `${(x.count / stats.count) * 100}%` }} />
+                        </div>
+                      </Link>
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            )}
+            <section className="rounded-xl bg-foreground p-6 text-background">
+              <p className="kicker !text-background/70">Boletín</p>
+              <p className="mt-2 font-display text-xl font-bold leading-tight">
+                Recibe lo nuevo de {author.name.split(" ")[0]} y del equipo.
+              </p>
+              <NewsletterForm variant="inline" source={`author_${author.slug}`} className="mt-4" />
+            </section>
+            <Link to="/autores" className="inline-flex h-10 items-center text-sm font-semibold text-brand hover:underline">
+              Ver todo el equipo →
+            </Link>
+          </div>
+        </aside>
+      </div>
     </div>
   );
 }
