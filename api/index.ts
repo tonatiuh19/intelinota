@@ -1567,6 +1567,9 @@ const handleAdminVerifyCode: RequestHandler = async (req, res) => {
 
     const user = (userRows as RowDataPacket[])[0];
 
+    // A successful OTP login proves the inbox (invited accounts start unverified)
+    await getPool().query("UPDATE users SET email_verified = 1 WHERE id = ? AND email_verified = 0", [user.id]);
+
     const token = jwt.sign(
       {
         userId: user.id,
@@ -3243,7 +3246,8 @@ const handleAdminDeleteArticle: RequestHandler = async (req, res) => {
 };
 
 /**
- * GET /api/admin/authors
+ * GET /api/admin/authors — team directory with per-author article stats.
+ * One aggregate query over articles (GROUP BY author_id) merged in memory.
  */
 const handleAdminGetAuthors: RequestHandler = async (_req, res) => {
   try {
@@ -3252,39 +3256,231 @@ const handleAdminGetAuthors: RequestHandler = async (_req, res) => {
       [rows] = await getPool().query<RowDataPacket[]>(
         `SELECT
           au.id, au.name, au.slug, au.bio, au.avatar_url, au.email, au.twitter_handle, au.social_links,
-          u.id AS user_id, u.role AS user_role, u.can_publish AS can_publish
+          u.id AS user_id, u.role AS user_role, u.can_publish AS can_publish, u.email AS user_email
          FROM authors au
-         LEFT JOIN users u ON u.author_id = au.id
+         LEFT JOIN users u ON u.author_id = au.id AND u.role IN ('admin','author')
          ORDER BY au.name ASC`,
       );
     } catch (queryErr: any) {
-      // Graceful fallback if social_links migration hasn't run yet
+      // Graceful fallback if social_links / can_publish migrations haven't run yet
       if (queryErr?.code === "ER_BAD_FIELD_ERROR") {
         [rows] = await getPool().query<RowDataPacket[]>(
           `SELECT
             au.id, au.name, au.slug, au.bio, au.avatar_url, au.email, au.twitter_handle, NULL AS social_links,
-            u.id AS user_id, u.role AS user_role, 0 AS can_publish
+            u.id AS user_id, u.role AS user_role, 0 AS can_publish, u.email AS user_email
            FROM authors au
-           LEFT JOIN users u ON u.author_id = au.id
+           LEFT JOIN users u ON u.author_id = au.id AND u.role IN ('admin','author')
            ORDER BY au.name ASC`,
         );
       } else {
         throw queryErr;
       }
     }
-    res.json({
-      success: true,
-      data: rows.map((r) => ({
-        ...r,
-        can_publish: r.user_role === "admin" || Number(r.can_publish) === 1,
-      })),
-    });
+    const [statRows] = await getPool().query<RowDataPacket[]>(
+      `SELECT author_id,
+              SUM(status = 'published') AS published,
+              SUM(status = 'draft') AS drafts,
+              SUM(status = 'in_review') AS in_review,
+              SUM(status = 'scheduled') AS scheduled,
+              COALESCE(SUM(view_count), 0) AS total_views,
+              MAX(CASE WHEN status = 'published' THEN published_at END) AS last_published_at
+       FROM articles
+       GROUP BY author_id`,
+    );
+    const stats = new Map<number, RowDataPacket>();
+    for (const s of statRows) stats.set(Number(s.author_id), s);
+
+    // An author could (in legacy data) be linked to several users: keep the first
+    const seen = new Set<number>();
+    const data = rows
+      .filter((r) => {
+        const id = Number(r.id);
+        if (seen.has(id)) return false;
+        seen.add(id);
+        return true;
+      })
+      .map((r) => {
+        const s = stats.get(Number(r.id));
+        return {
+          ...r,
+          can_publish: r.user_role === "admin" || Number(r.can_publish) === 1,
+          stats: {
+            published: Number(s?.published ?? 0),
+            drafts: Number(s?.drafts ?? 0),
+            in_review: Number(s?.in_review ?? 0),
+            scheduled: Number(s?.scheduled ?? 0),
+            total_views: Number(s?.total_views ?? 0),
+            last_published_at: s?.last_published_at ?? null,
+          },
+        };
+      });
+    res.json({ success: true, data });
   } catch (error) {
     res
       .status(500)
-      .json({ success: false, message: "Failed to fetch authors" });
+      .json({ success: false, message: "Failed to fetch authors", ...devError(error) });
   }
 };
+
+/** GET /api/admin/authors/slug-available?slug=&exclude_id= */
+const handleAdminAuthorSlugAvailable: RequestHandler = async (req, res) => {
+  try {
+    const raw = typeof req.query.slug === "string" ? req.query.slug : "";
+    const slug = slugify(raw);
+    const excludeId = parseInt(String(req.query.exclude_id ?? ""));
+    if (!slug) {
+      return res.json({ success: true, data: { available: false, suggestion: "" } });
+    }
+    const [rows] = await getPool().query<RowDataPacket[]>(
+      "SELECT slug FROM authors WHERE (slug = ? OR slug LIKE ?) AND id != ?",
+      [slug, `${escapeLike(slug)}-%`, Number.isFinite(excludeId) ? excludeId : 0],
+    );
+    const suggestion = suggestSlug(slug, new Set(rows.map((r) => String(r.slug))));
+    res.json({
+      success: true,
+      data: { available: suggestion === slug && slug === raw, suggestion },
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: "Failed to check slug", ...devError(error) });
+  }
+};
+
+const ACCESS_EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+function buildAuthorInviteEmailHtml(opts: {
+  name: string;
+  inviterName: string | null;
+  role: "admin" | "author";
+  canPublish: boolean;
+  loginUrl: string;
+}): string {
+  const roleLabel =
+    opts.role === "admin"
+      ? "administrador"
+      : opts.canPublish
+        ? "autor (puede publicar)"
+        : "autor";
+  const inviter = opts.inviterName ? `${escapeHtml(opts.inviterName)} te dio` : "Tienes";
+  return `<!DOCTYPE html>
+<html lang="es"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Invitación a INTELINOTA</title></head>
+<body style="margin:0;padding:0;background:#f6f4ef;font-family:Georgia,'Times New Roman',serif;color:#141414;">
+  <table width="100%" cellpadding="0" cellspacing="0" role="presentation"><tr><td align="center" style="padding:40px 16px;">
+    <table width="560" cellpadding="0" cellspacing="0" role="presentation" style="max-width:560px;width:100%;background:#ffffff;border:1px solid #e6e2d9;border-radius:12px;">
+      <tr><td style="padding:28px 32px 0;font-family:'Helvetica Neue',Arial,sans-serif;font-size:11px;font-weight:800;letter-spacing:2px;text-transform:uppercase;color:#2457ff;">Redacción INTELINOTA</td></tr>
+      <tr><td style="padding:12px 32px 0;"><h1 style="margin:0;font-size:28px;line-height:1.2;font-weight:700;">Hola, ${escapeHtml(opts.name)}</h1></td></tr>
+      <tr><td style="padding:16px 32px 0;font-family:'Helvetica Neue',Arial,sans-serif;font-size:15px;line-height:1.65;color:#3a3a3a;">
+        ${inviter} acceso al panel de la redacción como <strong>${escapeHtml(roleLabel)}</strong>.
+        Para entrar solo necesitas este correo: te enviaremos un código de 6 dígitos cada vez que inicies sesión.
+      </td></tr>
+      <tr><td style="padding:28px 32px;"><a href="${escapeHtml(opts.loginUrl)}" style="display:inline-block;background:#2457ff;color:#ffffff;text-decoration:none;font-family:'Helvetica Neue',Arial,sans-serif;font-weight:700;font-size:15px;padding:12px 22px;border-radius:8px;">Entrar al panel</a></td></tr>
+      <tr><td style="padding:0 32px 28px;font-family:'Helvetica Neue',Arial,sans-serif;font-size:12px;line-height:1.6;color:#777;">
+        Si no esperabas esta invitación, puedes ignorar este mensaje.
+      </td></tr>
+    </table>
+  </td></tr></table>
+</body></html>`;
+}
+
+interface AccessResult {
+  ok: boolean;
+  userId?: number;
+  created?: boolean;
+  inviteSent?: boolean;
+  status?: number;
+  message?: string;
+}
+
+/**
+ * Link (or create) the panel account for an author and send an invitation.
+ * Email failures never fail the request.
+ */
+async function grantAuthorAccess(
+  req: express.Request,
+  authorId: number,
+  authorName: string,
+  input: { email?: unknown; role?: unknown; can_publish?: unknown },
+): Promise<AccessResult> {
+  const email = typeof input.email === "string" ? input.email.toLowerCase().trim() : "";
+  if (!email || email.length > 255 || !ACCESS_EMAIL_RE.test(email)) {
+    return { ok: false, status: 400, message: "Correo inválido" };
+  }
+  const role: "admin" | "author" = input.role === "admin" ? "admin" : "author";
+  const canPublish = role === "admin" || input.can_publish === true;
+  const selfId = req.adminUser!.userId;
+
+  const [existingRows] = await getPool().query<RowDataPacket[]>(
+    "SELECT id, author_id, role FROM users WHERE email = ? LIMIT 1",
+    [email],
+  );
+  const existing = existingRows[0];
+  if (existing?.author_id && Number(existing.author_id) !== authorId) {
+    return { ok: false, status: 409, message: "Ese correo ya está vinculado a otro autor" };
+  }
+  const [linkedRows] = await getPool().query<RowDataPacket[]>(
+    "SELECT id FROM users WHERE author_id = ? AND role IN ('admin','author') AND email != ? LIMIT 1",
+    [authorId, email],
+  );
+  if (linkedRows.length) {
+    return { ok: false, status: 409, message: "Este autor ya tiene otra cuenta vinculada. Quita ese acceso primero." };
+  }
+  if (existing && Number(existing.id) === selfId && role !== "admin") {
+    return { ok: false, status: 400, message: "No puedes quitarte el rol de administrador" };
+  }
+
+  let userId: number;
+  let created = false;
+  const hadAccess = existing && (existing.role === "admin" || existing.role === "author") && Number(existing.author_id) === authorId;
+  if (existing) {
+    userId = Number(existing.id);
+    await getPool().query(
+      "UPDATE users SET role = ?, can_publish = ?, author_id = ? WHERE id = ?",
+      [role, canPublish ? 1 : 0, authorId, userId],
+    );
+  } else {
+    // Unverified until the first OTP login proves ownership of the inbox
+    const [ins] = await getPool().query<ResultSetHeader>(
+      `INSERT INTO users (email, password_hash, name, role, can_publish, author_id, email_verified)
+       VALUES (?, '', ?, ?, ?, ?, 0)`,
+      [email, authorName, role, canPublish ? 1 : 0, authorId],
+    );
+    userId = ins.insertId;
+    created = true;
+  }
+
+  let inviteSent = false;
+  if (!hadAccess) {
+    try {
+      const [inviterRows] = await getPool().query<RowDataPacket[]>(
+        "SELECT name FROM users WHERE id = ? LIMIT 1",
+        [selfId],
+      );
+      const base = getBaseUrl().replace(/\/$/, "");
+      await sendEmail({
+        to: email,
+        subject: "Tienes acceso al panel de INTELINOTA",
+        html: buildAuthorInviteEmailHtml({
+          name: authorName,
+          inviterName: (inviterRows[0]?.name as string | null) ?? null,
+          role,
+          canPublish,
+          loginUrl: `${base}/admin/login`,
+        }),
+      });
+      inviteSent = true;
+    } catch (err) {
+      console.error("author invite email failed:", err);
+    }
+  }
+
+  await audit(getPool(), {
+    ...auditFrom(req),
+    action: hadAccess ? "author.access.update" : "author.access.grant",
+    entityType: "author",
+    entityId: authorId,
+    details: { name: authorName, email, role, can_publish: canPublish, created, invite_sent: inviteSent },
+  });
+  return { ok: true, userId, created, inviteSent };
+}
 
 /**
  * POST /api/admin/authors
@@ -3292,18 +3488,22 @@ const handleAdminGetAuthors: RequestHandler = async (_req, res) => {
 const handleAdminCreateAuthor: RequestHandler = async (req, res) => {
   try {
     const body = req.body as {
-      name: string;
-      slug: string;
-      bio?: string;
-      avatar_url?: string;
-      twitter_handle?: string;
-      email?: string;
+      name?: string;
+      slug?: string;
+      bio?: string | null;
+      avatar_url?: string | null;
+      twitter_handle?: string | null;
+      email?: string | null;
       social_links?: object | null;
+      access?: { email?: string; role?: string; can_publish?: boolean } | null;
+      /** Legacy */
       user_email?: string;
       user_role?: string;
     };
 
-    if (!body.name || !body.slug) {
+    const name = typeof body.name === "string" ? body.name.trim().slice(0, 150) : "";
+    const slug = slugify(typeof body.slug === "string" && body.slug ? body.slug : name);
+    if (!name || !slug) {
       return res
         .status(400)
         .json({ success: false, message: "name and slug are required" });
@@ -3313,8 +3513,8 @@ const handleAdminCreateAuthor: RequestHandler = async (req, res) => {
       `INSERT INTO authors (name, slug, bio, avatar_url, email, twitter_handle, social_links)
        VALUES (?, ?, ?, ?, ?, ?, ?)`,
       [
-        body.name,
-        body.slug,
+        name,
+        slug,
         body.bio ?? null,
         body.avatar_url ?? null,
         body.email ?? null,
@@ -3324,39 +3524,32 @@ const handleAdminCreateAuthor: RequestHandler = async (req, res) => {
     );
 
     const authorId = result.insertId;
+    await audit(getPool(), {
+      ...auditFrom(req),
+      action: "author.create",
+      entityType: "author",
+      entityId: authorId,
+      details: { name, slug },
+    });
 
-    // Optionally create/link a user account
-    if (body.user_email) {
-      const role = body.user_role === "admin" ? "admin" : "author";
-      const [existingUsers] = await getPool().query<RowDataPacket[]>(
-        "SELECT id, author_id FROM users WHERE email = ? LIMIT 1",
-        [body.user_email],
-      );
-      if ((existingUsers as RowDataPacket[]).length) {
-        const existing = (existingUsers as RowDataPacket[])[0];
-        if (
-          existing.author_id &&
-          Number(existing.author_id) !== Number(authorId)
-        ) {
-          return res.status(409).json({
-            success: false,
-            message: "Email already linked to another author",
-          });
-        }
-        await getPool().query(
-          "UPDATE users SET name = ?, role = ?, author_id = ?, email_verified = 1 WHERE id = ?",
-          [body.name, role, authorId, existing.id],
-        );
-      } else {
-        await getPool().query(
-          `INSERT INTO users (email, password_hash, name, role, author_id, email_verified)
-           VALUES (?, '', ?, ?, ?, 1)`,
-          [body.user_email, body.name, role, authorId],
-        );
-      }
+    const access =
+      body.access ??
+      (body.user_email ? { email: body.user_email, role: body.user_role, can_publish: false } : null);
+    let accessResult: AccessResult | null = null;
+    if (access?.email) {
+      accessResult = await grantAuthorAccess(req, authorId, name, access);
     }
 
-    res.status(201).json({ success: true, data: { id: authorId } });
+    res.status(201).json({
+      success: true,
+      data: {
+        id: authorId,
+        access: accessResult?.ok
+          ? { user_id: accessResult.userId, created: accessResult.created, invite_sent: accessResult.inviteSent }
+          : null,
+        access_error: accessResult && !accessResult.ok ? accessResult.message : null,
+      },
+    });
   } catch (error: any) {
     if (error?.code === "ER_DUP_ENTRY") {
       return res
@@ -3365,7 +3558,7 @@ const handleAdminCreateAuthor: RequestHandler = async (req, res) => {
     }
     res
       .status(500)
-      .json({ success: false, message: "Failed to create author" });
+      .json({ success: false, message: "Failed to create author", ...devError(error) });
   }
 };
 
@@ -3379,7 +3572,7 @@ const handleAdminUpdateAuthor: RequestHandler = async (req, res) => {
       return res.status(400).json({ success: false, message: "Invalid id" });
 
     const [exists] = await getPool().query<RowDataPacket[]>(
-      "SELECT id FROM authors WHERE id = ? LIMIT 1",
+      "SELECT id, name FROM authors WHERE id = ? LIMIT 1",
       [id],
     );
     if (!(exists as RowDataPacket[]).length) {
@@ -3391,10 +3584,10 @@ const handleAdminUpdateAuthor: RequestHandler = async (req, res) => {
     const body = req.body as {
       name?: string;
       slug?: string;
-      bio?: string;
-      avatar_url?: string;
-      twitter_handle?: string;
-      email?: string;
+      bio?: string | null;
+      avatar_url?: string | null;
+      twitter_handle?: string | null;
+      email?: string | null;
       social_links?: object | null;
       user_email?: string;
       user_role?: string;
@@ -3404,12 +3597,12 @@ const handleAdminUpdateAuthor: RequestHandler = async (req, res) => {
     const sets: string[] = [];
     const vals: (string | number | null)[] = [];
     const fields: Record<string, string | number | null | undefined> = {
-      name: body.name,
-      slug: body.slug,
-      bio: body.bio ?? null,
-      avatar_url: body.avatar_url ?? null,
-      email: body.email ?? null,
-      twitter_handle: body.twitter_handle ?? null,
+      name: typeof body.name === "string" ? body.name.trim().slice(0, 150) || undefined : undefined,
+      slug: typeof body.slug === "string" ? slugify(body.slug) || undefined : undefined,
+      bio: body.bio,
+      avatar_url: body.avatar_url,
+      email: body.email,
+      twitter_handle: body.twitter_handle,
     };
     for (const [key, val] of Object.entries(fields)) {
       if (val !== undefined) {
@@ -3426,22 +3619,38 @@ const handleAdminUpdateAuthor: RequestHandler = async (req, res) => {
         `UPDATE authors SET ${sets.join(", ")} WHERE id = ?`,
         [...vals, id],
       );
+      await audit(getPool(), {
+        ...auditFrom(req),
+        action: "author.update",
+        entityType: "author",
+        entityId: id,
+        details: { name: fields.name ?? exists[0].name, fields: Object.keys(fields).filter((k) => fields[k] !== undefined) },
+      });
     }
 
-    // Update linked user role when provided
+    // Update linked user role when provided (never demote yourself)
     if (body.user_role) {
       const role = body.user_role === "admin" ? "admin" : "author";
-      if (body.user_email) {
-        await getPool().query(
-          "UPDATE users SET role = ? WHERE author_id = ? AND email = ?",
-          [role, id, body.user_email],
+      if (role !== "admin") {
+        const [selfRows] = await getPool().query<RowDataPacket[]>(
+          "SELECT id FROM users WHERE author_id = ? AND id = ? LIMIT 1",
+          [id, req.adminUser!.userId],
         );
-      } else {
-        await getPool().query("UPDATE users SET role = ? WHERE author_id = ?", [
-          role,
-          id,
-        ]);
+        if (selfRows.length) {
+          return res.status(400).json({ success: false, message: "No puedes quitarte el rol de administrador" });
+        }
       }
+      await getPool().query(
+        "UPDATE users SET role = ? WHERE author_id = ? AND role IN ('admin','author')",
+        [role, id],
+      );
+      await audit(getPool(), {
+        ...auditFrom(req),
+        action: "author.role.update",
+        entityType: "author",
+        entityId: id,
+        details: { name: exists[0].name, role },
+      });
     }
 
     // Trusted author: may publish/schedule their own articles
@@ -3455,6 +3664,7 @@ const handleAdminUpdateAuthor: RequestHandler = async (req, res) => {
         action: body.can_publish ? "author.can_publish.grant" : "author.can_publish.revoke",
         entityType: "author",
         entityId: id,
+        details: { name: exists[0].name },
       });
     }
 
@@ -3467,46 +3677,153 @@ const handleAdminUpdateAuthor: RequestHandler = async (req, res) => {
     }
     res
       .status(500)
-      .json({ success: false, message: "Failed to update author" });
+      .json({ success: false, message: "Failed to update author", ...devError(error) });
+  }
+};
+
+/** POST /api/admin/authors/:id/access — invite/link a panel account { email, role, can_publish } */
+const handleAdminGrantAuthorAccess: RequestHandler = async (req, res) => {
+  try {
+    const id = parseInt(req.params.id as string);
+    if (isNaN(id)) return res.status(400).json({ success: false, message: "Invalid id" });
+    const [rows] = await getPool().query<RowDataPacket[]>(
+      "SELECT id, name FROM authors WHERE id = ? LIMIT 1",
+      [id],
+    );
+    if (!rows.length) return res.status(404).json({ success: false, message: "Author not found" });
+    const r = await grantAuthorAccess(req, id, String(rows[0].name), req.body ?? {});
+    if (!r.ok) return res.status(r.status).json({ success: false, message: r.message });
+    res.json({ success: true, data: { user_id: r.userId, created: r.created, invite_sent: r.inviteSent } });
+  } catch (error) {
+    res.status(500).json({ success: false, message: "Failed to grant access", ...devError(error) });
   }
 };
 
 /**
- * DELETE /api/admin/authors/:id — admin only
+ * DELETE /api/admin/authors/:id/access — unlink the panel account (the users
+ * row is kept but demoted to reader, so the person can no longer sign in).
  */
-const handleAdminDeleteAuthor: RequestHandler = async (req, res) => {
+const handleAdminRevokeAuthorAccess: RequestHandler = async (req, res) => {
   try {
     const id = parseInt(req.params.id as string);
-    if (isNaN(id))
-      return res.status(400).json({ success: false, message: "Invalid id" });
-
-    // Check no published articles
-    const [articleCount] = await getPool().query<RowDataPacket[]>(
-      "SELECT COUNT(*) AS cnt FROM articles WHERE author_id = ? AND status = 'published'",
+    if (isNaN(id)) return res.status(400).json({ success: false, message: "Invalid id" });
+    const [rows] = await getPool().query<RowDataPacket[]>(
+      `SELECT u.id, u.email, u.role, au.name
+       FROM users u JOIN authors au ON au.id = u.author_id
+       WHERE u.author_id = ? AND u.role IN ('admin','author')`,
       [id],
     );
-    if (((articleCount as RowDataPacket[])[0].cnt as number) > 0) {
-      return res.status(409).json({
-        success: false,
-        message:
-          "Cannot delete author with published articles. Archive their articles first.",
-      });
+    if (!rows.length) return res.status(404).json({ success: false, message: "Este autor no tiene acceso al panel" });
+    if (rows.some((r) => Number(r.id) === req.adminUser!.userId)) {
+      return res.status(400).json({ success: false, message: "No puedes quitarte el acceso a ti mismo" });
     }
-
-    // Unlink user
     await getPool().query(
-      "UPDATE users SET author_id = NULL WHERE author_id = ?",
+      "UPDATE users SET role = 'reader', can_publish = 0, author_id = NULL WHERE author_id = ? AND role IN ('admin','author')",
       [id],
     );
-    await getPool().query("DELETE FROM authors WHERE id = ?", [id]);
-
+    await audit(getPool(), {
+      ...auditFrom(req),
+      action: "author.access.revoke",
+      entityType: "author",
+      entityId: id,
+      details: { name: rows[0].name, email: rows[0].email, role: rows[0].role },
+    });
     res.json({ success: true, data: { id } });
   } catch (error) {
-    res
-      .status(500)
-      .json({ success: false, message: "Failed to delete author" });
+    res.status(500).json({ success: false, message: "Failed to revoke access", ...devError(error) });
   }
 };
+
+/**
+ * DELETE /api/admin/authors/:id?reassign_to=ID — admin only.
+ * Authors with articles require reassigning them first (never orphaned).
+ */
+const handleAdminDeleteAuthor: RequestHandler = async (req, res) => {
+  const id = parseInt(req.params.id as string);
+  if (isNaN(id))
+    return res.status(400).json({ success: false, message: "Invalid id" });
+  const reassignRaw = parseInt(String(req.query.reassign_to ?? ""));
+  const reassignTo = Number.isFinite(reassignRaw) ? reassignRaw : null;
+
+  let conn: mysql.PoolConnection | null = null;
+  try {
+    const [authorRows] = await getPool().query<RowDataPacket[]>(
+      "SELECT id, name FROM authors WHERE id = ? LIMIT 1",
+      [id],
+    );
+    if (!authorRows.length) return res.status(404).json({ success: false, message: "Author not found" });
+
+    const [selfRows] = await getPool().query<RowDataPacket[]>(
+      "SELECT id FROM users WHERE id = ? AND author_id = ? LIMIT 1",
+      [req.adminUser!.userId, id],
+    );
+    if (selfRows.length) {
+      return res.status(400).json({ success: false, message: "No puedes eliminar tu propio perfil de autor" });
+    }
+
+    const [countRows] = await getPool().query<RowDataPacket[]>(
+      "SELECT COUNT(*) AS cnt FROM articles WHERE author_id = ?",
+      [id],
+    );
+    const articleCount = Number(countRows[0]?.cnt ?? 0);
+    if (articleCount > 0) {
+      if (reassignTo == null || reassignTo === id) {
+        return res.status(409).json({
+          success: false,
+          message: "Este autor tiene artículos: elige a quién reasignarlos antes de eliminarlo.",
+          data: { article_count: articleCount },
+        });
+      }
+      const [target] = await getPool().query<RowDataPacket[]>(
+        "SELECT id FROM authors WHERE id = ? LIMIT 1",
+        [reassignTo],
+      );
+      if (!target.length) return res.status(400).json({ success: false, message: "Autor destino no encontrado" });
+    }
+
+    conn = await getPool().getConnection();
+    await conn.beginTransaction();
+    let moved = 0;
+    if (articleCount > 0 && reassignTo != null) {
+      const [upd] = await conn.query<ResultSetHeader>(
+        "UPDATE articles SET author_id = ? WHERE author_id = ?",
+        [reassignTo, id],
+      );
+      moved = upd.affectedRows;
+    }
+    // Linked "author" accounts lose panel access; admins stay admins
+    await conn.query(
+      "UPDATE users SET role = 'reader', can_publish = 0 WHERE author_id = ? AND role = 'author'",
+      [id],
+    );
+    await conn.query("UPDATE users SET author_id = NULL WHERE author_id = ?", [id]);
+    await conn.query("DELETE FROM authors WHERE id = ?", [id]);
+    await conn.commit();
+
+    await audit(getPool(), {
+      ...auditFrom(req),
+      action: "author.delete",
+      entityType: "author",
+      entityId: id,
+      details: { name: authorRows[0].name, reassigned_to: moved ? reassignTo : null, articles_moved: moved },
+    });
+    res.json({ success: true, data: { id, articles_moved: moved } });
+  } catch (error) {
+    if (conn) {
+      try {
+        await conn.rollback();
+      } catch {
+        /* ignore */
+      }
+    }
+    res
+      .status(500)
+      .json({ success: false, message: "Failed to delete author", ...devError(error) });
+  } finally {
+    conn?.release();
+  }
+};
+
 
 /**
  * GET /api/admin/comments
@@ -4943,27 +5260,118 @@ const handleAdminRestoreRevision: RequestHandler = async (req, res) => {
   }
 };
 
-/** GET /api/admin/audit?page=&limit= (admin only) */
+/**
+ * Activity filter groups → static SQL over audit_log (alias l). Whitelisted:
+ * only these fragments are ever interpolated; all values are parameters.
+ */
+const AUDIT_TYPE_SQL: Record<string, string> = {
+  articles:
+    "l.entity_type = 'article' AND l.action NOT LIKE 'article.review.%' AND l.action NOT LIKE 'article.revision.%' AND l.action NOT IN ('article.pending_edit','article.status.in_review')",
+  review:
+    "(l.action LIKE 'article.review.%' OR l.action LIKE 'article.revision.%' OR l.action IN ('article.pending_edit','article.status.in_review'))",
+  comments: "l.entity_type = 'comment'",
+  authors: "l.entity_type = 'author'",
+  mcp: "(l.action LIKE 'mcp.%' OR l.entity_type LIKE 'mcp%')",
+  settings:
+    "(l.entity_type IN ('setting','settings','category','newsletter') OR l.action LIKE 'settings.%' OR l.action LIKE 'category.%' OR l.action LIKE 'newsletter.%')",
+};
+const AUDIT_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * GET /api/admin/audit?page=&limit=&user_id=&type=&from=&to=&include_mcp=1 (admin only)
+ * include_mcp merges mcp_audit_logs (tool calls made through an AI client):
+ * executed writes in the general feed, every call when type=mcp.
+ */
 const handleAdminAuditLog: RequestHandler = async (req, res) => {
   try {
     const page = Math.max(1, parseInt(String(req.query.page ?? "1")) || 1);
     const limit = Math.min(100, Math.max(1, parseInt(String(req.query.limit ?? "50")) || 50));
     const offset = (page - 1) * limit;
-    const [[rows], [countRows]] = await Promise.all([
-      getPool().query<RowDataPacket[]>(
-        `SELECT l.id, l.action, l.entity_type, l.entity_id, l.details, l.created_at,
-                u.name AS user_name, u.email AS user_email
-         FROM audit_log l LEFT JOIN users u ON u.id = l.user_id
-         ORDER BY l.created_at DESC, l.id DESC LIMIT ? OFFSET ?`,
-        [limit, offset],
-      ),
-      getPool().query<RowDataPacket[]>("SELECT COUNT(*) AS total FROM audit_log"),
+    const type = typeof req.query.type === "string" && AUDIT_TYPE_SQL[req.query.type] ? req.query.type : null;
+    const userIdRaw = parseInt(String(req.query.user_id ?? ""));
+    const userId = Number.isFinite(userIdRaw) && userIdRaw > 0 ? userIdRaw : null;
+    const from = typeof req.query.from === "string" && AUDIT_DATE_RE.test(req.query.from) ? req.query.from : null;
+    const to = typeof req.query.to === "string" && AUDIT_DATE_RE.test(req.query.to) ? req.query.to : null;
+    const includeMcp = req.query.include_mcp === "1" && (type === null || type === "mcp");
+
+    const aWhere: string[] = [];
+    const aParams: (string | number)[] = [];
+    if (type) aWhere.push(AUDIT_TYPE_SQL[type]);
+    if (userId) {
+      aWhere.push("l.user_id = ?");
+      aParams.push(userId);
+    }
+    if (from) {
+      aWhere.push("l.created_at >= ?");
+      aParams.push(`${from} 00:00:00`);
+    }
+    if (to) {
+      aWhere.push("l.created_at < DATE_ADD(?, INTERVAL 1 DAY)");
+      aParams.push(`${to} 00:00:00`);
+    }
+    const aSql = aWhere.length ? `WHERE ${aWhere.join(" AND ")}` : "";
+
+    const mWhere: string[] = [];
+    const mParams: (string | number)[] = [];
+    if (type !== "mcp") mWhere.push("m.confirm = 1");
+    if (userId) {
+      mWhere.push("m.user_id = ?");
+      mParams.push(userId);
+    }
+    if (from) {
+      mWhere.push("m.created_at >= ?");
+      mParams.push(`${from} 00:00:00`);
+    }
+    if (to) {
+      mWhere.push("m.created_at < DATE_ADD(?, INTERVAL 1 DAY)");
+      mParams.push(`${to} 00:00:00`);
+    }
+    const mSql = mWhere.length ? `WHERE ${mWhere.join(" AND ")}` : "";
+
+    const auditSelect = `SELECT l.id, 'audit' AS source, l.action, l.entity_type, l.entity_id, l.details, l.created_at,
+              l.user_id, u.name AS user_name, u.email AS user_email
+       FROM audit_log l LEFT JOIN users u ON u.id = l.user_id ${aSql}`;
+    const mcpSelect = `SELECT m.id, 'mcp' AS source, m.tool_name AS action, 'mcp_tool' AS entity_type, NULL AS entity_id,
+              JSON_OBJECT('tool', m.tool_name, 'ok', m.ok, 'confirm', m.confirm, 'client_id', m.client_id,
+                          'duration_ms', m.duration_ms, 'error', m.error_message) AS details,
+              m.created_at, m.user_id, u.name AS user_name, u.email AS user_email
+       FROM mcp_audit_logs m LEFT JOIN users u ON u.id = m.user_id ${mSql}`;
+
+    const listSql = includeMcp
+      ? `SELECT * FROM (${auditSelect} UNION ALL ${mcpSelect}) t ORDER BY t.created_at DESC, t.id DESC LIMIT ? OFFSET ?`
+      : `${auditSelect} ORDER BY l.created_at DESC, l.id DESC LIMIT ? OFFSET ?`;
+    const listParams = includeMcp ? [...aParams, ...mParams, limit, offset] : [...aParams, limit, offset];
+
+    const [[rows], [countRows], mcpCount, [userRows]] = await Promise.all([
+      getPool().query<RowDataPacket[]>(listSql, listParams),
+      getPool().query<RowDataPacket[]>(`SELECT COUNT(*) AS total FROM audit_log l ${aSql}`, aParams),
+      includeMcp
+        ? getPool().query<RowDataPacket[]>(`SELECT COUNT(*) AS total FROM mcp_audit_logs m ${mSql}`, mParams)
+        : Promise.resolve(null),
+      page === 1
+        ? getPool().query<RowDataPacket[]>(
+            "SELECT id, name, email FROM users WHERE role IN ('admin','author') ORDER BY name ASC, email ASC",
+          )
+        : Promise.resolve([[] as RowDataPacket[]] as const),
     ]);
-    const total = Number(countRows[0]?.total ?? 0);
+    const total =
+      Number(countRows[0]?.total ?? 0) + Number((mcpCount?.[0] as RowDataPacket[] | undefined)?.[0]?.total ?? 0);
+    const data = rows.map((r) => {
+      let details = r.details;
+      if (typeof details === "string") {
+        try {
+          details = JSON.parse(details);
+        } catch {
+          details = null;
+        }
+      }
+      return { ...r, source: r.source === "mcp" ? "mcp" : "audit", details };
+    });
     res.json({
       success: true,
-      data: rows,
+      data,
       pagination: { page, limit, total, totalPages: Math.ceil(total / limit) },
+      ...(page === 1 ? { users: userRows } : {}),
     });
   } catch (error) {
     res.status(500).json({ success: false, message: "Failed to load audit log", ...devError(error) });
@@ -6486,6 +6894,24 @@ function createServer() {
     requireAdminAuth,
     requireAdmin,
     handleAdminCreateAuthor,
+  );
+  expressApp.get(
+    "/api/admin/authors/slug-available",
+    requireAdminAuth,
+    requireAdmin,
+    handleAdminAuthorSlugAvailable,
+  );
+  expressApp.post(
+    "/api/admin/authors/:id/access",
+    requireAdminAuth,
+    requireAdmin,
+    handleAdminGrantAuthorAccess,
+  );
+  expressApp.delete(
+    "/api/admin/authors/:id/access",
+    requireAdminAuth,
+    requireAdmin,
+    handleAdminRevokeAuthorAccess,
   );
   expressApp.put(
     "/api/admin/authors/:id",

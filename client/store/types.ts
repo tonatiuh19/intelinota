@@ -110,6 +110,15 @@ export interface AdminAuthorsState {
   saving: boolean;
   saveError: string | null;
   deleteError: string | null;
+  /** Live slug availability for the author form */
+  slugCheck: {
+    slug: string;
+    checking: boolean;
+    available: boolean | null;
+    suggestion: string;
+  };
+  /** Author id whose panel access is being changed */
+  accessBusyId: number | null;
 }
 
 export interface AdminCommentsQuery {
@@ -226,10 +235,20 @@ export interface RevisionsState {
   error: string | null;
 }
 
+export interface AdminAuditFilters {
+  user_id: number | null;
+  type: import("@shared/api").AuditTypeFilter | null;
+  from: string | null;
+  to: string | null;
+}
+
 export interface AdminAuditState {
   items: import("@shared/api").AuditEntry[];
   pagination: { page: number; limit: number; total: number; totalPages: number } | null;
+  filters: AdminAuditFilters;
+  users: import("@shared/api").AuditUserOption[];
   loading: boolean;
+  loadingMore: boolean;
   error: string | null;
 }
 
