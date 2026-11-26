@@ -1,6 +1,6 @@
 import { Link } from "react-router-dom";
 import type { Article } from "@shared/api";
-import { articleImageSrcSet, articleImageUrl, IMAGE_SIZES } from "@/lib/images";
+import { ARTICLE_PLACEHOLDER, articleImageSrcSet, articleImageUrl, IMAGE_SIZES } from "@/lib/images";
 import { formatRelative } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
@@ -46,6 +46,13 @@ function Figure({
         decoding={priority ? "sync" : "async"}
         // @ts-expect-error — fetchpriority is valid HTML, not yet in React types
         fetchpriority={priority ? "high" : "auto"}
+        onError={(e) => {
+          const img = e.currentTarget;
+          if (img.dataset.fallback) return;
+          img.dataset.fallback = "1";
+          img.removeAttribute("srcset");
+          img.src = ARTICLE_PLACEHOLDER;
+        }}
         className="h-full w-full object-cover transition-transform duration-700 ease-editorial group-hover:scale-[1.03] motion-reduce:transform-none motion-reduce:transition-none"
       />
     </div>
