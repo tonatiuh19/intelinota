@@ -27,7 +27,8 @@
     "check:api-inline": "tsx scripts/check-api-inline.ts",
     "deploy:prod": "tsx scripts/deploy-prod.ts",
     "deploy:stamp-version": "tsx scripts/deploy-prod.ts --stamp-only",
-    "test:cleanup-fixtures": "tsx scripts/cleanup-test-fixtures.ts"
+    "test:cleanup-fixtures": "tsx scripts/cleanup-test-fixtures.ts",
+    "check:api-runtime": "npx tsx scripts/check-api-runtime.ts"
   },
   "dependencies": {
     "@reduxjs/toolkit": "^2.11.2",
@@ -58,7 +59,7 @@
     "react-image-crop": "^11.0.10",
     "react-redux": "^9.2.0",
     "resend": "^6.12.0",
-    "sanitize-html": "^2.18.2",
+    "sanitize-html": "2.17.0",
     "sharp": "^0.35.5",
     "yup": "^1.7.1",
     "zod": "^3.25.76"

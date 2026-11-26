@@ -429,6 +429,11 @@ async function runPreDeployChecks() {
     );
   }
 
+  // Load the API like Vercel's runtime (CJS, require(esm) off): catches
+  // dependencies that crash at import time (FUNCTION_INVOCATION_FAILED).
+  stage = "api-runtime";
+  await runCommand("npm", ["run", "check:api-runtime"]);
+
   stage = "typecheck";
   await runCommand("npm", ["run", "typecheck"]);
   console.log("\n✅ Typecheck passed.\n");
