@@ -13,7 +13,7 @@ const RICH_HTML_OPTIONS: sanitizeHtmlLib.IOptions = {
   allowedAttributes: {
     a: ["href", "title", "target", "rel"],
     img: ["src", "alt", "title", "width", "height", "loading"],
-    iframe: ["src", "width", "height", "allow", "allowfullscreen", "title"],
+    iframe: ["src", "width", "height", "allow", "allowfullscreen", "title", "loading"],
     td: ["colspan", "rowspan", "style"],
     th: ["colspan", "rowspan", "style"],
     col: ["style"],
@@ -40,6 +40,7 @@ const RICH_HTML_OPTIONS: sanitizeHtmlLib.IOptions = {
     "player.vimeo.com",
     "open.spotify.com",
     "platform.twitter.com",
+    "www.instagram.com",
   ],
   // Drop iframes whose src was removed (non-whitelisted host)
   exclusiveFilter: (frame) => frame.tag === "iframe" && !frame.attribs.src,

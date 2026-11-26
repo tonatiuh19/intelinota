@@ -1,1304 +1,999 @@
-import { useEffect, useState, useCallback, useRef } from "react";
-import { useNavigate, useParams } from "react-router-dom";
-import { useAppDispatch, useAppSelector } from "@/store/hooks";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Link, useNavigate, useParams } from "react-router-dom";
+import { useFormik } from "formik";
+import * as Yup from "yup";
 import {
-  fetchAdminArticle,
-  createAdminArticle,
-  updateAdminArticle,
-  clearCurrent,
-  clearSaveError,
-  selectAdminArticlesCurrent,
-  selectAdminArticlesCurrentLoading,
-  selectAdminArticlesCurrentError,
-  selectAdminArticlesSaving,
-  selectAdminArticlesSaveError,
-  fetchFeaturedCount,
-  selectAdminArticlesFeaturedCount,
-} from "@/store/slices/adminArticlesSlice";
-import { selectAdminUser } from "@/store/slices/adminAuthSlice";
-import {
-  selectAdminAuthors,
-  fetchAdminAuthors,
-} from "@/store/slices/adminAuthorsSlice";
-import { fetchHome, selectHomeCategories } from "@/store/slices/homeSlice";
-import { useToast } from "@/hooks/use-toast";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
-import { Badge } from "@/components/ui/badge";
-import { Switch } from "@/components/ui/switch";
-import { Alert, AlertDescription } from "@/components/ui/alert";
-import { Skeleton } from "@/components/ui/skeleton";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import RichHtmlEditor from "@/components/RichHtmlEditor";
-import ArticleBlock from "@/components/ArticleBlock";
-import type {
-  ArticleStatus,
-  ContentBlockType,
-  ContentBlock,
-  ContentBlockData,
-  UpsertBlockPayload,
-} from "@shared/api";
-import {
+  AlertTriangle,
   ArrowLeft,
-  Save,
-  Loader2,
-  Plus,
-  Trash2,
-  GripVertical,
-  Code2,
-  Image as ImageIcon,
-  Youtube,
-  Twitter,
-  Instagram,
-  Quote,
-  Minus,
-  ChevronUp,
-  ChevronDown,
+  Check,
+  CloudOff,
   Eye,
-  EyeOff,
-  Sparkles,
+  History,
+  ImagePlus,
+  Loader2,
+  Monitor,
+  PanelRight,
+  Send,
+  Smartphone,
+  X,
 } from "lucide-react";
-import { cn } from "@/lib/utils";
+import type { ArticleStatus, ContentBlock } from "@shared/api";
+import { useAppDispatch, useAppSelector } from "@/store/hooks";
+import { selectAdminUser } from "@/store/slices/adminAuthSlice";
+import { fetchAdminAuthors, selectAdminAuthors } from "@/store/slices/adminAuthorsSlice";
+import { fetchHome, selectHomeCategories } from "@/store/slices/homeSlice";
+import {
+  clearCurrent,
+  fetchAdminArticle,
+  selectAdminArticlesCurrent,
+  selectAdminArticlesCurrentError,
+} from "@/store/slices/adminArticlesSlice";
+import { checkSlug, resetEditor, saveArticle, type EditorArticlePayload } from "@/store/slices/articleEditorSlice";
+import { uploadMedia } from "@/store/slices/adminMediaSlice";
+import { fetchArticleNotes, selectArticleNotes } from "@/store/slices/adminReviewsSlice";
+import StoryEditor from "@/components/editor/StoryEditor";
 import ImageUploadCrop from "@/components/ImageUploadCrop";
 import RevisionsPanel from "@/components/admin/RevisionsPanel";
+import MetaHead from "@/components/MetaHead";
+import { Button } from "@/components/ui/button";
+import { Switch } from "@/components/ui/switch";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
+import { useToast } from "@/hooks/use-toast";
+import { blocksToHtml, countWords } from "@/lib/legacyBlocks";
+import { resizeImageFile } from "@/lib/imageResize";
+import { DEFAULT_NEWSROOM_TZ, formatInTz, isoToZonedLocal, zonedLocalToIso } from "@/lib/timezone";
+import { formatRelative } from "@/lib/format";
+import { cn } from "@/lib/utils";
 
-// ── Slug generator ────────────────────────────────────────────
-function toSlug(text: string): string {
-  return text
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/[^a-z0-9\s-]/g, "")
-    .trim()
-    .replace(/\s+/g, "-")
-    .replace(/-+/g, "-")
-    .slice(0, 200);
-}
+/* ─────────────────────────── Form model ─────────────────────────── */
 
-// ── Block type config ─────────────────────────────────────────
-const BLOCK_TYPES: Array<{
-  type: ContentBlockType;
-  icon: React.ComponentType<{ className?: string }>;
-  label: string;
-}> = [
-  { type: "html", icon: Code2, label: "HTML" },
-  { type: "image", icon: ImageIcon, label: "Imagen" },
-  { type: "youtube", icon: Youtube, label: "YouTube" },
-  { type: "twitter", icon: Twitter, label: "Twitter" },
-  { type: "instagram", icon: Instagram, label: "Instagram" },
-  { type: "quote", icon: Quote, label: "Cita" },
-  { type: "divider", icon: Minus, label: "Divisor" },
-];
-
-const defaultBlockData = (type: ContentBlockType): ContentBlockData => {
-  switch (type) {
-    case "html":
-      return { html: "" };
-    case "image":
-      return { url: "", caption: "", alt: "", credit: "" };
-    case "youtube":
-      return { video_id: "", caption: "" };
-    case "twitter":
-      return { tweet_url: "", tweet_id: "" };
-    case "instagram":
-      return { post_url: "" };
-    case "quote":
-      return { text: "", attribution: "" };
-    default:
-      return {};
-  }
-};
-
-// ── Block editor components ───────────────────────────────────
-function BlockEditor({
-  block,
-  onChange,
-  articleUploadId,
-  blockIndex,
-}: {
-  block: UpsertBlockPayload;
-  onChange: (data: ContentBlockData) => void;
-  articleUploadId: string;
-  blockIndex: number;
-}) {
-  const data = block.data as Record<string, string>;
-
-  const field = (
-    key: string,
-    label_: string,
-    multiline = false,
-    placeholder = "",
-  ) => (
-    <div className="space-y-1" key={key}>
-      <Label className="text-xs text-muted-foreground">{label_}</Label>
-      {multiline ? (
-        <Textarea
-          value={data[key] ?? ""}
-          onChange={(e) =>
-            onChange({ ...data, [key]: e.target.value } as ContentBlockData)
-          }
-          placeholder={placeholder}
-          className="bg-accent/30 border-border text-sm min-h-[100px] resize-y font-mono text-xs"
-          rows={4}
-        />
-      ) : (
-        <Input
-          value={data[key] ?? ""}
-          onChange={(e) =>
-            onChange({ ...data, [key]: e.target.value } as ContentBlockData)
-          }
-          placeholder={placeholder}
-          className="bg-accent/30 border-border h-8 text-sm"
-        />
-      )}
-    </div>
-  );
-
-  switch (block.type) {
-    case "html":
-      return (
-        <RichHtmlEditor
-          value={(block.data as Record<string, string>).html ?? ""}
-          onChange={(html) =>
-            onChange({ ...block.data, html } as ContentBlockData)
-          }
-        />
-      );
-    case "image":
-      return (
-        <div className="space-y-3">
-          <ImageUploadCrop
-            value={data.url ?? ""}
-            onChange={(url) => onChange({ ...data, url } as ContentBlockData)}
-            uploadId={`${articleUploadId}_block_${blockIndex}`}
-            aspectRatio={16 / 9}
-            label="Imagen del bloque"
-            previewShape="rect"
-          />
-          <div className="grid grid-cols-2 gap-3">
-            {field("alt", "Alt text", false, "Descripción de la imagen")}
-            {field("caption", "Pie de foto", false, "Descripción visible")}
-            {field("credit", "Crédito", false, "Fuente / fotógrafo")}
-          </div>
-        </div>
-      );
-    case "youtube":
-      return (
-        <div className="space-y-2">
-          {field("video_id", "ID del video de YouTube *", false, "dQw4w9WgXcQ")}
-          {field("caption", "Pie de video", false, "")}
-        </div>
-      );
-    case "twitter":
-      return (
-        <div className="space-y-2">
-          {field(
-            "tweet_url",
-            "URL del tweet *",
-            false,
-            "https://twitter.com/user/status/...",
-          )}
-          {field("tweet_id", "ID del tweet", false, "123456789")}
-        </div>
-      );
-    case "instagram":
-      return (
-        <div className="space-y-2">
-          {field(
-            "post_url",
-            "URL de la publicación *",
-            false,
-            "https://instagram.com/p/...",
-          )}
-        </div>
-      );
-    case "quote":
-      return (
-        <div className="space-y-2">
-          {field("text", "Texto de la cita *", true, "La cita aquí...")}
-          {field("attribution", "Atribución", false, "— Nombre, Cargo")}
-        </div>
-      );
-    case "divider":
-      return (
-        <p className="text-xs text-muted-foreground italic">
-          Divisor horizontal — no requiere configuración
-        </p>
-      );
-    default:
-      return null;
-  }
-}
-
-// ── Main component ────────────────────────────────────────────
-interface ArticleForm {
+interface EditorValues {
   title: string;
-  slug: string;
   excerpt: string;
-  content: string;
+  html: string;
+  slug: string;
   category_id: string;
   subcategory_id: string;
   author_id: string;
   image_url: string;
-  read_time_minutes: string;
+  tags: string[];
   featured: boolean;
   trending: boolean;
   status: ArticleStatus;
-  published_at: string;
-  tags: string;
+  publish_local: string; // wall time in newsroom tz
+  meta_title: string;
+  meta_description: string;
 }
 
-const EMPTY_FORM: ArticleForm = {
+const EMPTY: EditorValues = {
   title: "",
-  slug: "",
   excerpt: "",
-  content: "",
+  html: "",
+  slug: "",
   category_id: "",
   subcategory_id: "",
   author_id: "",
   image_url: "",
-  read_time_minutes: "5",
+  tags: [],
   featured: false,
   trending: false,
   status: "draft",
-  published_at: "",
-  tags: "",
+  publish_local: "",
+  meta_title: "",
+  meta_description: "",
 };
 
+/** Required to publish / submit (drafts autosave without full validation). */
+const publishSchema = Yup.object({
+  title: Yup.string().trim().min(10, "El título es muy corto").max(200).required("Escribe un título"),
+  excerpt: Yup.string().trim().max(300, "Máximo 300 caracteres"),
+  slug: Yup.string().matches(/^[a-z0-9]+(-[a-z0-9]+)*$/, "Solo minúsculas, números y guiones").required(),
+  category_id: Yup.string().required("Elige una sección"),
+  author_id: Yup.string().required("Elige un autor"),
+  html: Yup.string().test("words", "La historia necesita al menos 50 palabras", (v) => countWords(v ?? "") >= 50),
+  meta_title: Yup.string().max(70, "Máximo 70 caracteres"),
+  meta_description: Yup.string().max(170, "Máximo 170 caracteres"),
+});
+
+function slugify(s: string) {
+  return s
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 90);
+}
+
+const STATUS_META: Record<string, { label: string; dot: string }> = {
+  draft: { label: "Borrador", dot: "bg-amber-500" },
+  in_review: { label: "En revisión", dot: "bg-violet-500" },
+  scheduled: { label: "Programado", dot: "bg-sky-500" },
+  published: { label: "Publicado", dot: "bg-emerald-500" },
+  archived: { label: "Archivado", dot: "bg-zinc-400" },
+};
+
+/** Canonical HTML: no inter-tag whitespace, no trailing empty paragraphs
+ *  (TipTap keeps one at the end so the caret can always go below). */
+function cleanHtml(html: string): string {
+  return html
+    .replace(/>\s+</g, "><")
+    .replace(/(<p><\/p>)+$/g, "")
+    .trim();
+}
+
+const backupKey = (id: number | null) => `intelinota_editor_backup_${id ?? "new"}`;
+
+interface Backup {
+  values: EditorValues;
+  at: number;
+}
+
+function readBackup(id: number | null): Backup | null {
+  try {
+    const raw = localStorage.getItem(backupKey(id));
+    return raw ? (JSON.parse(raw) as Backup) : null;
+  } catch {
+    return null;
+  }
+}
+
+/* ─────────────────────────── Component ─────────────────────────── */
+
 export default function ArticleEditor() {
-  const { id } = useParams<{ id?: string }>();
-  const isEditing = !!id;
+  const { id: idParam } = useParams<{ id?: string }>();
   const navigate = useNavigate();
   const dispatch = useAppDispatch();
-
-  const current = useAppSelector(selectAdminArticlesCurrent);
-  const currentLoading = useAppSelector(selectAdminArticlesCurrentLoading);
-  const currentError = useAppSelector(selectAdminArticlesCurrentError);
-  const saving = useAppSelector(selectAdminArticlesSaving);
-  const saveError = useAppSelector(selectAdminArticlesSaveError);
-  const user = useAppSelector(selectAdminUser);
   const { toast } = useToast();
+
+  const user = useAppSelector(selectAdminUser);
   const categories = useAppSelector(selectHomeCategories);
   const authors = useAppSelector(selectAdminAuthors);
-  const featuredCount = useAppSelector(selectAdminArticlesFeaturedCount);
+  const current = useAppSelector(selectAdminArticlesCurrent);
+  const loadError = useAppSelector(selectAdminArticlesCurrentError);
+  const editorState = useAppSelector((s) => s.articleEditor);
 
-  const [form, setForm] = useState<ArticleForm>(EMPTY_FORM);
-  const [blocks, setBlocks] = useState<UpsertBlockPayload[]>([]);
-  const [slugEdited, setSlugEdited] = useState(false);
-  const [previewMode, setPreviewMode] = useState(false);
-  const [showPreview, setShowPreview] = useState(false);
-  const [dragIdx, setDragIdx] = useState<number | null>(null);
-  const [dragOverIdx, setDragOverIdx] = useState<number | null>(null);
-  // Stable upload ID: article_<id> for existing, article_temp_<ts> for new
-  const tempUploadIdRef = useRef(`article_temp_${Date.now()}`);
-  const articleUploadId =
-    isEditing && id ? `article_${id}` : tempUploadIdRef.current;
+  const [articleId, setArticleId] = useState<number | null>(idParam ? Number(idParam) : null);
+  const [serverStatus, setServerStatus] = useState<ArticleStatus>("draft");
+  const [serverPublishedAt, setServerPublishedAt] = useState<string | null>(null);
+  const [originalSlug, setOriginalSlug] = useState<string>("");
+  const [slugTouched, setSlugTouched] = useState(false);
+  const [loaded, setLoaded] = useState(!idParam);
+  const [dirty, setDirty] = useState(false);
+  const [offline, setOffline] = useState(!navigator.onLine);
+  const [panelOpen, setPanelOpen] = useState(() => window.matchMedia("(min-width: 1280px)").matches);
+  const [mobilePanel, setMobilePanel] = useState(false);
+  const [publishOpen, setPublishOpen] = useState(false);
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [previewDevice, setPreviewDevice] = useState<"phone" | "desktop">("phone");
+  const [conflict, setConflict] = useState(false);
+  const [recover, setRecover] = useState<Backup | null>(null);
+  const [scheduleMode, setScheduleMode] = useState<"now" | "later">("now");
+  const [tagDraft, setTagDraft] = useState("");
+  const [, forceTick] = useState(0);
 
-  // Load categories + authors
+  const updatedAtRef = useRef<string | null>(null);
+  const newUploadId = useRef(`article_new_${Date.now()}`);
+  const savingRef = useRef(false);
+  const autosaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const isAdmin = user?.role === "admin";
+  const canPublish = isAdmin || Boolean(user?.can_publish);
+  const tz = user?.newsroom_timezone || DEFAULT_NEWSROOM_TZ;
+  const notes = useAppSelector(selectArticleNotes(articleId ?? 0));
+  const pendingRevision = (current as { pending_revision?: { id: number; created_at: string | null } | null } | null)?.pending_revision ?? null;
+  const isLive = serverStatus === "published";
+
+  /* ── Load ─────────────────────────────────────────────────────── */
   useEffect(() => {
     dispatch(fetchHome());
-    dispatch(fetchFeaturedCount());
-    if (user?.role === "admin") dispatch(fetchAdminAuthors());
-  }, [dispatch, user?.role]);
+    if (isAdmin) dispatch(fetchAdminAuthors());
+  }, [dispatch, isAdmin]);
 
-  // Load existing article
   useEffect(() => {
-    if (isEditing && id) {
-      dispatch(fetchAdminArticle(parseInt(id)));
+    dispatch(resetEditor());
+    if (articleId) {
+      dispatch(fetchAdminArticle(articleId));
+      dispatch(fetchArticleNotes(articleId));
     }
     return () => {
       dispatch(clearCurrent());
     };
-  }, [dispatch, id, isEditing]);
-
-  // Populate form from loaded article
-  useEffect(() => {
-    if (isEditing && current) {
-      setForm({
-        title: current.title,
-        slug: current.slug,
-        excerpt: current.excerpt ?? "",
-        content: current.content ?? "",
-        category_id: String(current.category_id),
-        subcategory_id: String(current.subcategory_id ?? ""),
-        author_id: String(current.author_id),
-        image_url: current.image_url ?? "",
-        read_time_minutes: String(current.read_time_minutes),
-        featured: Boolean(current.featured),
-        trending: Boolean(current.trending),
-        status: current.status,
-        published_at: current.published_at
-          ? new Date(current.published_at).toISOString().slice(0, 16)
-          : "",
-        tags: (current.tags ?? []).join(", "),
-      });
-      setSlugEdited(true);
-      if (current.blocks) {
-        setBlocks(
-          current.blocks.map((b: ContentBlock, i: number) => ({
-            id: b.id,
-            position: i + 1,
-            type: b.type,
-            data: b.data,
-          })),
-        );
-      }
-    }
-  }, [isEditing, current]);
-
-  // Pre-fill author for non-admin
-  useEffect(() => {
-    if (!isEditing && user?.role === "author" && user.author_id) {
-      setForm((f) => ({ ...f, author_id: String(user.author_id) }));
-    }
-  }, [isEditing, user]);
-
-  // Auto slug
-  const handleTitleChange = useCallback(
-    (title: string) => {
-      setForm((f) => ({
-        ...f,
-        title,
-        slug: slugEdited ? f.slug : toSlug(title),
-      }));
-    },
-    [slugEdited],
-  );
-
-  const handleSlugChange = (slug: string) => {
-    setSlugEdited(true);
-    setForm((f) => ({ ...f, slug: toSlug(slug) }));
-  };
-
-  // Blocks management
-  const addBlock = (type: ContentBlockType) => {
-    setBlocks((prev) => [
-      ...prev,
-      { position: prev.length + 1, type, data: defaultBlockData(type) },
-    ]);
-  };
-
-  const removeBlock = (idx: number) => {
-    setBlocks((prev) =>
-      prev
-        .filter((_, i) => i !== idx)
-        .map((b, i) => ({ ...b, position: i + 1 })),
-    );
-  };
-
-  const moveBlock = (idx: number, dir: "up" | "down") => {
-    setBlocks((prev) => {
-      const next = [...prev];
-      const swap = dir === "up" ? idx - 1 : idx + 1;
-      if (swap < 0 || swap >= next.length) return prev;
-      [next[idx], next[swap]] = [next[swap], next[idx]];
-      return next.map((b, i) => ({ ...b, position: i + 1 }));
-    });
-  };
-
-  const updateBlockData = (idx: number, data: ContentBlockData) => {
-    setBlocks((prev) => prev.map((b, i) => (i === idx ? { ...b, data } : b)));
-  };
-
-  const handleBlockDrop = (e: React.DragEvent, targetIdx: number) => {
-    e.preventDefault();
-    setDragOverIdx(null);
-    if (dragIdx === null || dragIdx === targetIdx) {
-      setDragIdx(null);
-      return;
-    }
-    setBlocks((prev) => {
-      const next = [...prev];
-      const [moved] = next.splice(dragIdx, 1);
-      next.splice(targetIdx, 0, moved);
-      return next.map((b, i) => ({ ...b, position: i + 1 }));
-    });
-    setDragIdx(null);
-  };
-
-  // Auto-calculate reading time whenever blocks or excerpt change
-  // Strip HTML tags, count words, divide by 200 wpm (average reader)
-  useEffect(() => {
-    const stripHtml = (html: string) =>
-      html
-        .replace(/<[^>]*>/g, " ")
-        .replace(/\s+/g, " ")
-        .trim();
-
-    const blockText = blocks
-      .map((b) => {
-        const d = b.data as Record<string, string>;
-        if (b.type === "html") return stripHtml(d.html ?? "");
-        if (b.type === "quote") return `${d.text ?? ""} ${d.attribution ?? ""}`;
-        return "";
-      })
-      .join(" ");
-
-    const allText = `${form.title} ${form.excerpt} ${blockText}`.trim();
-    const wordCount = allText.split(/\s+/).filter(Boolean).length;
-    const minutes = Math.max(1, Math.round(wordCount / 200));
-    setForm((f) => ({ ...f, read_time_minutes: String(minutes) }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [blocks, form.excerpt, form.title]);
-  const buildPayload = () => {
-    const finalStatus: ArticleStatus = form.status;
-    const finalPublishedAt =
-      finalStatus === "published" && !form.published_at
-        ? new Date().toISOString()
-        : form.published_at
-          ? new Date(form.published_at).toISOString()
-          : null;
-    // Validate: scheduled must have a future published_at
-    if (finalStatus === "scheduled" && !form.published_at) {
-      return null;
-    }
-    return {
-      title: form.title,
-      slug: form.slug,
-      excerpt: form.excerpt || null,
-      content: form.content || null,
-      category_id: parseInt(form.category_id),
-      subcategory_id: form.subcategory_id
-        ? parseInt(form.subcategory_id)
-        : null,
-      author_id: parseInt(form.author_id),
-      image_url: form.image_url || null,
-      read_time_minutes: parseInt(form.read_time_minutes) || 5,
-      featured: form.featured,
-      trending: form.trending,
-      status: finalStatus,
-      published_at: finalPublishedAt,
-      blocks,
-      tags: form.tags
-        .split(",")
-        .map((t) => t.trim())
-        .filter(Boolean),
+  }, [dispatch]);
+
+  const formik = useFormik<EditorValues>({
+    initialValues: EMPTY,
+    validationSchema: publishSchema,
+    validateOnChange: false,
+    validateOnBlur: true,
+    onSubmit: () => undefined, // saving is explicit (autosave / publish dialog)
+  });
+  const v = formik.values;
+  const formikValuesRef = useRef(v);
+  formikValuesRef.current = v;
+
+  // Populate from server once
+  useEffect(() => {
+    if (!articleId || loaded || !current || current.id !== articleId) return;
+    const blocks = (current.blocks ?? []) as ContentBlock[];
+    const html =
+      blocks.length === 1 && blocks[0].type === "html"
+        ? String((blocks[0].data as { html?: string }).html ?? "")
+        : blocks.length
+          ? blocksToHtml(blocks)
+          : current.content ?? "";
+    const c = current as typeof current & { updated_at?: string; meta_title?: string | null; meta_description?: string | null };
+    const values: EditorValues = {
+      title: current.title,
+      excerpt: current.excerpt ?? "",
+      html,
+      slug: current.slug,
+      category_id: String(current.category_id ?? ""),
+      subcategory_id: current.subcategory_id ? String(current.subcategory_id) : "",
+      author_id: String(current.author_id ?? ""),
+      image_url: current.image_url ?? "",
+      tags: current.tags ?? [],
+      featured: Boolean(current.featured),
+      trending: Boolean(current.trending),
+      status: current.status,
+      publish_local: isoToZonedLocal(current.published_at, tz),
+      meta_title: c.meta_title ?? "",
+      meta_description: c.meta_description ?? "",
     };
-  };
+    formik.resetForm({ values });
+    updatedAtRef.current = c.updated_at ?? null;
+    setServerStatus(current.status);
+    setServerPublishedAt(current.published_at);
+    setOriginalSlug(current.slug);
+    setSlugTouched(true);
+    setLoaded(true);
+    // Unsaved local work newer than the server copy?
+    const b = readBackup(articleId);
+    const serverTs = c.updated_at ? Date.parse(c.updated_at) : 0;
+    if (b && b.at > serverTs + 2000 && (b.values.html !== values.html || b.values.title !== values.title)) setRecover(b);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [current, articleId, loaded]);
 
-  // Step 1: validate + open preview
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    dispatch(clearSaveError());
-    if (!form.title || !form.slug || !form.category_id || !form.author_id) {
-      toast({
-        title: "Campos requeridos",
-        description: "Completa título, slug, categoría y autor.",
-        variant: "destructive",
-      });
-      return;
-    }
-    if (form.status === "scheduled" && !form.published_at) {
-      toast({
-        title: "Fecha requerida",
-        description: "Indica la fecha de publicación programada.",
-        variant: "destructive",
-      });
-      return;
-    }
-    setShowPreview(true);
-  };
+  // New article defaults (own author, first section) + recover unsaved new draft
+  useEffect(() => {
+    if (articleId || !user) return;
+    if (!v.author_id && (user.author_id || authors[0]))
+      formik.setFieldValue("author_id", String(user.author_id ?? authors[0]?.id ?? ""), false);
+    if (!v.category_id && categories[0]) formik.setFieldValue("category_id", String(categories[0].id), false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user, authors, categories, articleId]);
 
-  const previewStatusLabel = (() => {
-    if (user?.role !== "admin")
-      return form.status === "in_review"
-        ? "Se enviará a revisión editorial"
-        : "Se guardará como borrador";
-    if (form.status === "in_review") return "Quedará en revisión";
-    if (form.status === "published") return "Se publicará al guardar";
-    if (form.status === "scheduled") return "Se programará al guardar";
-    if (form.status === "archived") return "Se archivará al guardar";
-    return "Se guardará como borrador";
-  })();
+  useEffect(() => {
+    if (articleId) return;
+    const b = readBackup(null);
+    if (b && (b.values.title || countWords(b.values.html) > 0)) setRecover(b);
+  }, [articleId]);
 
-  const previewSaveLabel =
-    user?.role !== "admin"
-      ? form.status === "in_review"
-        ? "Enviar a revisión"
-        : "Guardar borrador"
-      : form.status === "published"
-        ? "Publicar artículo"
-        : form.status === "scheduled"
-          ? "Programar artículo"
-          : form.status === "archived"
-            ? "Archivar artículo"
-            : "Guardar borrador";
+  /* ── Derived ──────────────────────────────────────────────────── */
+  const words = useMemo(() => countWords(v.html), [v.html]);
+  const readMinutes = Math.max(1, Math.round(words / 200));
+  const subcategories = categories.find((c) => String(c.id) === v.category_id)?.subcategories ?? [];
+  const authorName =
+    authors.find((a) => String(a.id) === v.author_id)?.name ?? (current?.author_name || user?.name || "Autor");
 
-  // Step 2: confirmed in preview → actually save
-  const performSave = async () => {
-    const payload = buildPayload();
-    if (!payload) return;
-    try {
-      if (isEditing && id) {
-        await dispatch(
-          updateAdminArticle({ id: parseInt(id), payload }),
-        ).unwrap();
-        setShowPreview(false);
-        navigate("/admin/articles");
-      } else {
-        const newId = await dispatch(createAdminArticle(payload)).unwrap();
-        setShowPreview(false);
-        navigate(`/admin/articles/${newId}/edit`, { replace: true });
-      }
-    } catch {
-      // saveError shown in modal footer via Redux state
-    }
-  };
+  // Auto slug from title until the writer edits it (or it's published)
+  useEffect(() => {
+    if (slugTouched || isLive) return;
+    formik.setFieldValue("slug", slugify(v.title), false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [v.title]);
 
-  const selectedCategory = categories.find(
-    (c) => String(c.id) === form.category_id,
+  // Slug availability (debounced)
+  useEffect(() => {
+    if (!v.slug) return;
+    const t = setTimeout(() => dispatch(checkSlug({ slug: v.slug, excludeId: articleId })), 450);
+    return () => clearTimeout(t);
+  }, [v.slug, articleId, dispatch]);
+  const slugTaken = editorState?.slugCheck?.slug === v.slug && !editorState.slugCheck.available;
+
+  /* ── Save ─────────────────────────────────────────────────────── */
+  const buildPayload = useCallback(
+    (status: ArticleStatus, publishedAt: string | null, force = false): EditorArticlePayload => ({
+      title: v.title.trim() || "Sin título",
+      slug: v.slug || slugify(v.title) || `borrador-${Date.now()}`,
+      excerpt: v.excerpt.trim() || null,
+      category_id: Number(v.category_id),
+      subcategory_id: v.subcategory_id ? Number(v.subcategory_id) : null,
+      author_id: Number(v.author_id),
+      image_url: v.image_url || null,
+      read_time_minutes: readMinutes,
+      featured: v.featured,
+      trending: v.trending,
+      status,
+      published_at: publishedAt,
+      tags: v.tags,
+      meta_title: v.meta_title.trim() || null,
+      meta_description: v.meta_description.trim() || null,
+      blocks: [{ position: 0, type: "html", data: { html: cleanHtml(v.html) } }],
+      expected_updated_at: force ? null : updatedAtRef.current,
+    }),
+    [v, readMinutes],
   );
-  const subcategories = selectedCategory?.subcategories ?? [];
 
-  // Whether enabling featured on THIS save will push out the oldest featured article
-  const willDisplaceFeatured =
-    form.featured &&
-    featuredCount !== null &&
-    featuredCount >= 5 &&
-    !(isEditing && Boolean(current?.featured));
+  const doSave = useCallback(
+    async (opts: { status?: ArticleStatus; publishedAt?: string | null; autosave?: boolean; force?: boolean } = {}) => {
+      if (savingRef.current) return null;
+      if (!v.category_id || !v.author_id) return null;
+      savingRef.current = true;
+      const status = opts.status ?? serverStatus;
+      const publishedAt = opts.publishedAt !== undefined ? opts.publishedAt : serverPublishedAt;
+      const result = await dispatch(
+        saveArticle({ id: articleId, payload: buildPayload(status, publishedAt, opts.force), autosave: opts.autosave }),
+      );
+      savingRef.current = false;
+      if (saveArticle.rejected.match(result)) {
+        if (!opts.autosave) toast({ title: "No se pudo guardar", description: String(result.payload ?? ""), variant: "destructive" });
+        return null;
+      }
+      const out = result.payload;
+      if (out.kind === "conflict") {
+        setConflict(true);
+        return out;
+      }
+      setDirty(false);
+      baselineRef.current = snapshot(formikValuesRef.current);
+      if (out.kind === "saved") {
+        updatedAtRef.current = out.updated_at;
+        setServerStatus(status);
+        setServerPublishedAt(publishedAt);
+        setOriginalSlug(buildPayload(status, publishedAt).slug);
+        try {
+          localStorage.removeItem(backupKey(articleId));
+        } catch {
+          /* ignore */
+        }
+        if (!articleId) {
+          try {
+            localStorage.removeItem(backupKey(null));
+          } catch {
+            /* ignore */
+          }
+          setArticleId(out.id);
+          navigate(`/admin/articles/${out.id}/edit`, { replace: true });
+        }
+      }
+      return out;
+    },
+    [v, articleId, serverStatus, serverPublishedAt, buildPayload, dispatch, navigate, toast],
+  );
 
-  if (isEditing && currentLoading && !current) {
-    return (
-      <div className="max-w-5xl mx-auto space-y-6">
-        <Skeleton className="h-10 w-64" />
-        <Skeleton className="h-96 w-full rounded-xl" />
-        <Skeleton className="h-48 w-full rounded-xl" />
-      </div>
-    );
+  // Dirty = differs from the last loaded/saved snapshot. The baseline is
+  // captured shortly after load so the editor's HTML normalization of the
+  // stored content doesn't count as a change.
+  const baselineRef = useRef<string | null>(null);
+  // Compare ignoring inter-tag whitespace (TipTap drops it on first update)
+  const snapshot = (x: EditorValues) => JSON.stringify({ ...x, html: cleanHtml(x.html) });
+  const serialized = snapshot(v);
+  useEffect(() => {
+    if (!loaded) return;
+    baselineRef.current = null;
+    const t = setTimeout(() => {
+      baselineRef.current = snapshot(formikValuesRef.current);
+      setDirty(false);
+    }, 400);
+    return () => clearTimeout(t);
+  }, [loaded]);
+  useEffect(() => {
+    if (!loaded || baselineRef.current === null) return;
+    const changed = serialized !== baselineRef.current;
+    setDirty(changed);
+    if (!changed) return;
+    const t = setTimeout(() => {
+      try {
+        localStorage.setItem(backupKey(articleId), JSON.stringify({ values: v, at: Date.now() } satisfies Backup));
+      } catch {
+        /* storage full */
+      }
+    }, 600);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [serialized, loaded]);
+
+  // Server autosave for drafts / in-review (never for live articles)
+  const autosaveEligible = !isLive && serverStatus !== "scheduled" && v.title.trim().length > 0;
+  useEffect(() => {
+    if (!dirty || !autosaveEligible || offline || conflict) return;
+    if (autosaveTimer.current) clearTimeout(autosaveTimer.current);
+    autosaveTimer.current = setTimeout(() => void doSave({ autosave: true }), 4000);
+    return () => {
+      if (autosaveTimer.current) clearTimeout(autosaveTimer.current);
+    };
+  }, [dirty, autosaveEligible, offline, conflict, doSave]);
+
+  // Online/offline + unload guard + Cmd/Ctrl+S
+  useEffect(() => {
+    const on = () => setOffline(false);
+    const off = () => setOffline(true);
+    const beforeUnload = (e: BeforeUnloadEvent) => {
+      if (dirty) {
+        e.preventDefault();
+        e.returnValue = "";
+      }
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "s") {
+        e.preventDefault();
+        if (isLive) setPublishOpen(true);
+        else void doSave().then((r) => r?.kind === "saved" && toast({ title: "Guardado" }));
+      }
+    };
+    window.addEventListener("online", on);
+    window.addEventListener("offline", off);
+    window.addEventListener("beforeunload", beforeUnload);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("online", on);
+      window.removeEventListener("offline", off);
+      window.removeEventListener("beforeunload", beforeUnload);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [dirty, isLive, doSave, toast]);
+
+  // Re-render the "Guardado hace Xs" label
+  useEffect(() => {
+    const t = setInterval(() => forceTick((n) => n + 1), 15000);
+    return () => clearInterval(t);
+  }, []);
+
+  /* ── Image upload (resized on device) ─────────────────────────── */
+  const uploadInline = useCallback(
+    async (file: File) => {
+      const r = await resizeImageFile(file);
+      const res = await dispatch(
+        uploadMedia({
+          data_base64: r.base64,
+          mime_type: r.mime,
+          filename: `${(articleId ? `article_${articleId}` : "article_new")}_${Date.now()}.${r.mime === "image/webp" ? "webp" : "jpg"}`,
+        }),
+      );
+      if (uploadMedia.rejected.match(res)) throw new Error(String(res.payload ?? "No se pudo subir"));
+      return res.payload.url;
+    },
+    [dispatch, articleId],
+  );
+
+  /* ── Publish flow ─────────────────────────────────────────────── */
+  const checklist = [
+    { ok: v.title.trim().length >= 10, label: "Título claro" },
+    { ok: Boolean(v.image_url), label: "Imagen principal", soft: true },
+    { ok: v.excerpt.trim().length >= 40, label: "Resumen (40+ caracteres)", soft: true },
+    { ok: words >= 50, label: `Texto (${words} palabras)` },
+    { ok: Boolean(v.category_id), label: "Sección" },
+    { ok: !slugTaken, label: "URL disponible" },
+  ];
+  const blocking = checklist.filter((c) => !c.ok && !c.soft);
+
+  async function confirmPublish() {
+    const errors = await formik.validateForm();
+    if (Object.keys(errors).length || blocking.length) {
+      formik.setTouched(Object.fromEntries(Object.keys(errors).map((k) => [k, true])), false);
+      toast({ title: "Revisa antes de continuar", description: Object.values(errors)[0] as string ?? blocking[0]?.label, variant: "destructive" });
+      return;
+    }
+    let status: ArticleStatus;
+    let publishedAt: string | null = serverPublishedAt;
+    if (!canPublish) {
+      status = isLive ? "published" : "in_review"; // live → server stores a pending change
+    } else if (scheduleMode === "later") {
+      const iso = zonedLocalToIso(v.publish_local, tz);
+      if (!iso || Date.parse(iso) < Date.now() + 60_000) {
+        toast({ title: "Fecha inválida", description: "Elige una fecha futura.", variant: "destructive" });
+        return;
+      }
+      status = "scheduled";
+      publishedAt = iso;
+    } else {
+      status = "published";
+      publishedAt = isLive ? serverPublishedAt : new Date().toISOString();
+    }
+    const out = await doSave({ status, publishedAt });
+    if (!out || out.kind === "conflict") return;
+    setPublishOpen(false);
+    if (out.kind === "pending") {
+      toast({ title: "Cambios enviados a revisión", description: "La versión publicada no cambia hasta que un editor los apruebe." });
+    } else if (status === "in_review") {
+      toast({ title: "Enviado a revisión", description: "Te avisaremos cuando un editor lo revise." });
+    } else if (status === "scheduled") {
+      toast({ title: "Programado", description: `Se publicará el ${formatInTz(publishedAt, tz)}.` });
+    } else {
+      toast({ title: isLive ? "Actualizado" : "¡Publicado!", description: v.title });
+    }
   }
 
-  if (isEditing && currentError && !current) {
-    return (
-      <div className="max-w-5xl mx-auto space-y-4">
-        <Alert variant="destructive">
-          <AlertDescription>{currentError}</AlertDescription>
-        </Alert>
-        <Button variant="outline" onClick={() => navigate("/admin/articles")}>
-          Volver a artículos
-        </Button>
-      </div>
-    );
-  }
+  const primaryLabel = !canPublish
+    ? isLive
+      ? "Enviar cambios"
+      : serverStatus === "in_review"
+        ? "Reenviar"
+        : "Enviar a revisión"
+    : isLive
+      ? "Actualizar"
+      : serverStatus === "scheduled"
+        ? "Reprogramar"
+        : "Publicar";
 
-  return (
-    <div className="max-w-5xl mx-auto space-y-6">
-      {/* Header */}
-      <div className="flex items-start sm:items-center gap-2 sm:gap-4 flex-wrap">
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={() => navigate("/admin/articles")}
-          className="text-muted-foreground"
-        >
-          <ArrowLeft className="w-4 h-4 mr-1" />
-          Artículos
-        </Button>
-        <h1 className="text-lg sm:text-xl font-bold text-foreground">
-          {isEditing ? "Editar artículo" : "Nuevo artículo"}
-        </h1>
-        <div className="ml-auto flex items-center gap-2 flex-wrap justify-end">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => setPreviewMode((p) => !p)}
-            className="gap-2 h-9"
-          >
-            {previewMode ? (
-              <EyeOff className="w-4 h-4" />
-            ) : (
-              <Eye className="w-4 h-4" />
-            )}
-            <span className="hidden sm:inline">
-              {previewMode ? "Editar" : "Vista previa bloques"}
-            </span>
-          </Button>
-          <Button
-            form="article-form"
-            type="submit"
-            disabled={
-              saving ||
-              !form.title ||
-              !form.slug ||
-              !form.category_id ||
-              !form.author_id
-            }
-            className="bg-blue-600 hover:bg-blue-700 text-white h-9 shadow-lg shadow-blue-500/20"
-          >
-            {saving ? (
-              <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-            ) : (
-              <Save className="w-4 h-4 mr-2" />
-            )}
-            {saving ? "Guardando…" : "Guardar"}
-          </Button>
+  const saveIndicator = offline ? (
+    <span className="inline-flex items-center gap-1.5 text-amber-600"><CloudOff className="h-3.5 w-3.5" /> Sin conexión · copia local</span>
+  ) : editorState?.saving ? (
+    <span className="inline-flex items-center gap-1.5"><Loader2 className="h-3.5 w-3.5 animate-spin" /> Guardando…</span>
+  ) : dirty ? (
+    <span>{isLive ? "Cambios sin publicar" : "Cambios sin guardar"}</span>
+  ) : editorState?.lastSavedAt ? (
+    <span className="inline-flex items-center gap-1.5"><Check className="h-3.5 w-3.5 text-emerald-600" /> Guardado {formatRelative(new Date(editorState.lastSavedAt))}</span>
+  ) : articleId ? (
+    <span>Todo guardado</span>
+  ) : (
+    <span>Nuevo borrador</span>
+  );
+
+  /* ── Details panel (shared desktop / mobile sheet) ────────────── */
+  const field = "h-10 w-full rounded-lg border bg-background px-3 text-sm outline-none focus:border-brand focus:ring-2 focus:ring-brand/20";
+  const label = "mb-1.5 block font-sans text-xs font-semibold text-muted-foreground";
+  const metaTitle = v.meta_title || v.title;
+  const metaDesc = v.meta_description || v.excerpt;
+
+  const details = (
+    <div className="space-y-7 pb-6">
+      <section className="space-y-3">
+        <h3 className="kicker !text-muted-foreground">Imagen principal</h3>
+        <ImageUploadCrop
+          value={v.image_url}
+          onChange={(url: string) => formik.setFieldValue("image_url", url ?? "")}
+          uploadId={articleId ? `article_${articleId}` : newUploadId.current}
+          aspectRatio={16 / 9}
+        />
+      </section>
+
+      <section className="space-y-3">
+        <h3 className="kicker !text-muted-foreground">Clasificación</h3>
+        <div>
+          <label htmlFor="ed-cat" className={label}>Sección</label>
+          <select id="ed-cat" className={field} {...formik.getFieldProps("category_id")} onChange={(e) => { formik.setFieldValue("category_id", e.target.value); formik.setFieldValue("subcategory_id", ""); }}>
+            {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+          </select>
         </div>
-      </div>
+        {subcategories.length > 0 && (
+          <div>
+            <label htmlFor="ed-sub" className={label}>Subsección</label>
+            <select id="ed-sub" className={field} {...formik.getFieldProps("subcategory_id")}>
+              <option value="">— Ninguna —</option>
+              {subcategories.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+            </select>
+          </div>
+        )}
+        <div>
+          <label htmlFor="ed-tags" className={label}>Temas</label>
+          <div className="flex min-h-10 flex-wrap items-center gap-1.5 rounded-lg border bg-background p-1.5 focus-within:border-brand">
+            {v.tags.map((t) => (
+              <span key={t} className="inline-flex h-7 items-center gap-1 rounded-full bg-brand/10 pl-2.5 pr-1 text-xs font-medium">
+                {t}
+                <button type="button" aria-label={`Quitar ${t}`} className="inline-flex h-6 w-6 items-center justify-center rounded-full hover:bg-brand/20" onClick={() => formik.setFieldValue("tags", v.tags.filter((x) => x !== t))}>
+                  <X className="h-3 w-3" />
+                </button>
+              </span>
+            ))}
+            <input
+              id="ed-tags"
+              value={tagDraft}
+              onChange={(e) => setTagDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if ((e.key === "Enter" || e.key === ",") && tagDraft.trim()) {
+                  e.preventDefault();
+                  const t = tagDraft.trim().slice(0, 40);
+                  if (!v.tags.some((x) => x.toLowerCase() === t.toLowerCase()) && v.tags.length < 12) formik.setFieldValue("tags", [...v.tags, t]);
+                  setTagDraft("");
+                } else if (e.key === "Backspace" && !tagDraft && v.tags.length) {
+                  formik.setFieldValue("tags", v.tags.slice(0, -1));
+                }
+              }}
+              placeholder={v.tags.length ? "" : "IA, Liga MX… (Enter)"}
+              className="h-7 min-w-[8rem] flex-1 bg-transparent px-1 text-sm outline-none"
+            />
+          </div>
+        </div>
+        {isAdmin && (
+          <div>
+            <label htmlFor="ed-author" className={label}>Autor</label>
+            <select id="ed-author" className={field} {...formik.getFieldProps("author_id")}>
+              {authors.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+            </select>
+          </div>
+        )}
+        {isAdmin && (
+          <div className="space-y-2 rounded-lg border p-3">
+            <label className="flex items-center justify-between gap-3 text-sm">
+              <span>Destacado en portada</span>
+              <Switch checked={v.featured} onCheckedChange={(c) => formik.setFieldValue("featured", c)} />
+            </label>
+            <label className="flex items-center justify-between gap-3 text-sm">
+              <span>Tendencia</span>
+              <Switch checked={v.trending} onCheckedChange={(c) => formik.setFieldValue("trending", c)} />
+            </label>
+          </div>
+        )}
+      </section>
 
-      {saveError && (
-        <Alert
-          variant="destructive"
-          className="border-destructive/50 bg-destructive/10"
-        >
-          <AlertDescription>{saveError}</AlertDescription>
-        </Alert>
+      <section className="space-y-3">
+        <h3 className="kicker !text-muted-foreground">URL</h3>
+        <div className="flex items-center rounded-lg border bg-background focus-within:border-brand">
+          <span className="hidden pl-3 font-mono text-xs text-muted-foreground sm:inline">/articulo/</span>
+          <input
+            aria-label="URL del artículo"
+            className="h-10 min-w-0 flex-1 bg-transparent px-2 font-mono text-xs outline-none"
+            value={v.slug}
+            onChange={(e) => {
+              setSlugTouched(true);
+              formik.setFieldValue("slug", slugify(e.target.value));
+            }}
+          />
+        </div>
+        {slugTaken && (
+          <p className="flex flex-wrap items-center gap-2 text-xs text-destructive">
+            Esta URL ya existe.
+            <button type="button" className="font-semibold underline" onClick={() => formik.setFieldValue("slug", editorState!.slugCheck!.suggestion)}>
+              Usar “{editorState?.slugCheck?.suggestion}”
+            </button>
+          </p>
+        )}
+        {isLive && v.slug !== originalSlug && (
+          <p className="text-xs text-muted-foreground">La URL anterior redirigirá automáticamente a la nueva.</p>
+        )}
+      </section>
+
+      <section className="space-y-3">
+        <h3 className="kicker !text-muted-foreground">SEO y redes</h3>
+        <div>
+          <label htmlFor="ed-mt" className={cn(label, "flex justify-between")}>
+            <span>Título SEO</span>
+            <span className={cn("tabular-nums", (v.meta_title || v.title).length > 60 && "text-amber-600")}>{(v.meta_title || v.title).length}/60</span>
+          </label>
+          <input id="ed-mt" className={field} placeholder={v.title || "Usa el título del artículo"} {...formik.getFieldProps("meta_title")} />
+        </div>
+        <div>
+          <label htmlFor="ed-md" className={cn(label, "flex justify-between")}>
+            <span>Descripción SEO</span>
+            <span className={cn("tabular-nums", metaDesc.length > 155 && "text-amber-600")}>{metaDesc.length}/155</span>
+          </label>
+          <textarea id="ed-md" rows={3} className={cn(field, "h-auto py-2")} placeholder={v.excerpt || "Usa el resumen"} {...formik.getFieldProps("meta_description")} />
+        </div>
+        <div className="rounded-lg border bg-card p-3">
+          <p className="font-sans text-[11px] text-muted-foreground">intelinota.com › articulo › {v.slug.slice(0, 30) || "…"}</p>
+          <p className="mt-0.5 line-clamp-1 font-sans text-[15px] text-[#1a0dab] dark:text-[#8ab4f8]">{metaTitle || "Título del artículo"}</p>
+          <p className="mt-0.5 line-clamp-2 font-sans text-xs text-muted-foreground">{metaDesc || "La descripción aparecerá aquí en Google."}</p>
+        </div>
+      </section>
+
+      {notes.length > 0 && (
+        <section className="space-y-2">
+          <h3 className="kicker !text-muted-foreground">Notas de revisión</h3>
+          <ol className="space-y-2">
+            {notes.map((n) => (
+              <li key={n.id} className="rounded-lg border bg-background p-3 text-sm">
+                <p className="text-xs text-muted-foreground">
+                  <span className="font-semibold text-foreground">{n.user_name ?? "Editor"}</span> ·{" "}
+                  {{ returned: "devolvió", approved: "aprobó", published: "publicó", comment: "comentó" }[n.action]} · {formatRelative(n.created_at)}
+                </p>
+                {n.note && <p className="mt-1 whitespace-pre-wrap">{n.note}</p>}
+              </li>
+            ))}
+          </ol>
+        </section>
       )}
 
-      <form id="article-form" onSubmit={handleSubmit} className="space-y-6">
-        <div className="grid lg:grid-cols-[1fr_300px] gap-6">
-          {/* Main column */}
-          <div className="space-y-5">
-            {/* Title */}
-            <div className="space-y-2">
-              <Label htmlFor="title" className="text-sm font-medium">
-                Título *
-              </Label>
-              <Input
-                id="title"
-                value={form.title}
-                onChange={(e) => handleTitleChange(e.target.value)}
-                placeholder="El título de tu artículo"
-                className="bg-accent/40 border-border h-11 text-base font-medium"
-                required
-              />
-            </div>
+      {articleId && (
+        <section>
+          <RevisionsPanel articleId={articleId} onRestored={() => { setLoaded(false); dispatch(fetchAdminArticle(articleId)); }} />
+        </section>
+      )}
+    </div>
+  );
 
-            {/* Slug */}
-            <div className="space-y-2">
-              <Label htmlFor="slug" className="text-sm font-medium">
-                Slug *
-              </Label>
-              <div className="flex gap-2">
-                <Input
-                  id="slug"
-                  value={form.slug}
-                  onChange={(e) => handleSlugChange(e.target.value)}
-                  placeholder="url-del-articulo"
-                  className="bg-accent/40 border-border h-9 font-mono text-sm"
-                  required
-                />
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={() => {
-                    setSlugEdited(false);
-                    setForm((f) => ({ ...f, slug: toSlug(f.title) }));
-                  }}
-                  className="h-9 px-3 flex-shrink-0"
-                  title="Regenerar desde el título"
-                >
-                  <Sparkles className="w-3.5 h-3.5" />
-                </Button>
-              </div>
-              <p className="text-xs text-muted-foreground">
-                /articulo/{form.slug || "…"}
-              </p>
-            </div>
-
-            {/* Excerpt */}
-            <div className="space-y-2">
-              <Label htmlFor="excerpt" className="text-sm font-medium">
-                Resumen
-              </Label>
-              <Textarea
-                id="excerpt"
-                value={form.excerpt}
-                onChange={(e) =>
-                  setForm((f) => ({ ...f, excerpt: e.target.value }))
-                }
-                placeholder="Breve descripción del artículo (aparece en listados y SEO)"
-                className="bg-accent/40 border-border text-sm resize-none"
-                rows={3}
-              />
-            </div>
-
-            {/* Image upload */}
-            <div className="space-y-2">
-              <Label htmlFor="image_url" className="text-sm font-medium">
-                Imagen principal
-              </Label>
-              <ImageUploadCrop
-                value={form.image_url}
-                onChange={(url) => setForm((f) => ({ ...f, image_url: url }))}
-                uploadId={articleUploadId}
-                aspectRatio={16 / 9}
-                previewShape="rect"
-              />
-            </div>
-
-            {/* Content Blocks section */}
-            <div className="space-y-4">
-              <div className="flex items-center justify-between">
-                <Label className="text-sm font-semibold">
-                  Bloques de contenido
-                </Label>
-                <Badge variant="secondary" className="text-xs">
-                  {blocks.length} bloque{blocks.length !== 1 ? "s" : ""}
-                </Badge>
-              </div>
-
-              {/* Add block buttons */}
-              <div className="flex flex-wrap gap-2 p-3 rounded-lg bg-accent/20 border border-dashed border-border">
-                <span className="text-xs text-muted-foreground self-center mr-1">
-                  Agregar:
-                </span>
-                {BLOCK_TYPES.map(({ type, icon: Icon, label }) => (
-                  <Button
-                    key={type}
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={() => addBlock(type)}
-                    className="h-7 px-2.5 text-xs gap-1.5"
-                  >
-                    <Icon className="w-3 h-3" />
-                    {label}
-                  </Button>
-                ))}
-              </div>
-
-              {/* Block list */}
-              <div className="space-y-3">
-                {blocks.map((block, idx) => {
-                  const blockConfig = BLOCK_TYPES.find(
-                    (t) => t.type === block.type,
-                  );
-                  const Icon = blockConfig?.icon ?? Code2;
-                  return (
-                    <div
-                      key={idx}
-                      onDragOver={(e) => {
-                        e.preventDefault();
-                        setDragOverIdx(idx);
-                      }}
-                      onDrop={(e) => handleBlockDrop(e, idx)}
-                      onDragLeave={() => setDragOverIdx(null)}
-                      className={cn(
-                        "rounded-lg border bg-card/60 overflow-hidden transition-all",
-                        dragIdx === idx
-                          ? "opacity-40 border-border"
-                          : dragOverIdx === idx
-                            ? "border-blue-500 border-2"
-                            : "border-border",
-                      )}
-                    >
-                      {/* Block header */}
-                      <div className="flex items-center gap-2 px-3 py-2 bg-accent/30 border-b border-border">
-                        <div
-                          draggable
-                          onDragStart={(e) => {
-                            setDragIdx(idx);
-                            e.dataTransfer.effectAllowed = "move";
-                          }}
-                          onDragEnd={() => {
-                            setDragIdx(null);
-                            setDragOverIdx(null);
-                          }}
-                          className="cursor-grab active:cursor-grabbing flex items-center flex-shrink-0"
-                        >
-                          <GripVertical className="w-4 h-4 text-muted-foreground/50" />
-                        </div>
-                        <Icon className="w-3.5 h-3.5 text-blue-400 flex-shrink-0" />
-                        <span className="text-xs font-medium text-foreground flex-1">
-                          {blockConfig?.label ?? block.type} #{idx + 1}
-                        </span>
-                        <div className="flex items-center gap-1">
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="icon"
-                            className="w-6 h-6"
-                            onClick={() => moveBlock(idx, "up")}
-                            disabled={idx === 0}
-                          >
-                            <ChevronUp className="w-3 h-3" />
-                          </Button>
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="icon"
-                            className="w-6 h-6"
-                            onClick={() => moveBlock(idx, "down")}
-                            disabled={idx === blocks.length - 1}
-                          >
-                            <ChevronDown className="w-3 h-3" />
-                          </Button>
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="icon"
-                            className="w-6 h-6 text-destructive hover:text-destructive"
-                            onClick={() => removeBlock(idx)}
-                          >
-                            <Trash2 className="w-3 h-3" />
-                          </Button>
-                        </div>
-                      </div>
-
-                      {/* Block content editor / preview */}
-                      <div className="p-3">
-                        {previewMode ? (
-                          <BlockPreview block={block} />
-                        ) : (
-                          <BlockEditor
-                            block={block}
-                            onChange={(data) => updateBlockData(idx, data)}
-                            articleUploadId={articleUploadId}
-                            blockIndex={idx}
-                          />
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
+  /* ── Render ───────────────────────────────────────────────────── */
+  if (articleId && !loaded) {
+    return (
+      <div className="mx-auto max-w-[720px] space-y-6 py-10">
+        {loadError ? (
+          <div className="text-center">
+            <p className="font-display text-xl font-semibold">{loadError}</p>
+            <Button asChild variant="outline" className="mt-4 h-10"><Link to="/admin/articles">Volver</Link></Button>
           </div>
+        ) : (
+          <>
+            <Skeleton className="h-12 w-4/5" />
+            <Skeleton className="h-6 w-3/5" />
+            <Skeleton className="h-64 w-full" />
+          </>
+        )}
+      </div>
+    );
+  }
 
-          {/* Sidebar column */}
-          <div className="space-y-4">
-            {isEditing && id && (
-              <RevisionsPanel
-                articleId={parseInt(id)}
-                onRestored={() => dispatch(fetchAdminArticle(parseInt(id)))}
-              />
+  const st = STATUS_META[serverStatus] ?? STATUS_META.draft;
+
+  return (
+    <div className="-m-4 min-h-[calc(100vh-3.5rem)] pb-24 sm:-m-6 md:pb-10">
+      <MetaHead title={v.title ? `Editando: ${v.title}` : "Nuevo artículo"} noIndex includeSiteOrganization={false} />
+
+      {/* ── Top bar ─────────────────────────────────────────────── */}
+      <div className="sticky top-0 z-30 border-b bg-background/90 backdrop-blur">
+        <div className="flex h-14 items-center gap-2 px-3 sm:px-5">
+          <Button asChild variant="ghost" size="icon" className="h-10 w-10 shrink-0" aria-label="Volver a artículos">
+            <Link to="/admin/articles"><ArrowLeft className="h-5 w-5" /></Link>
+          </Button>
+          <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium">
+            <span className={cn("h-2 w-2 rounded-full", st.dot)} /> {st.label}
+          </span>
+          <span className="ml-1 hidden min-w-0 truncate text-xs text-muted-foreground sm:block" aria-live="polite">{saveIndicator}</span>
+          <div className="ml-auto flex items-center gap-1.5">
+            <Button variant="ghost" size="icon" className="hidden h-10 w-10 sm:inline-flex" aria-label="Vista previa" onClick={() => setPreviewOpen(true)}>
+              <Eye className="h-5 w-5" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="hidden h-10 w-10 lg:inline-flex"
+              aria-label={panelOpen ? "Ocultar detalles" : "Mostrar detalles"}
+              aria-pressed={panelOpen}
+              onClick={() => setPanelOpen((o) => !o)}
+            >
+              <PanelRight className="h-5 w-5" />
+            </Button>
+            <Button variant="outline" size="icon" className="h-10 w-10 lg:hidden" aria-label="Detalles" onClick={() => setMobilePanel(true)}>
+              <PanelRight className="h-5 w-5" />
+            </Button>
+            {!isLive && (
+              <Button variant="outline" className="hidden h-10 sm:inline-flex" disabled={editorState?.saving} onClick={() => void doSave().then((r) => r?.kind === "saved" && toast({ title: "Guardado" }))}>
+                Guardar
+              </Button>
             )}
-            {/* Status */}
-            <div className="rounded-xl border border-border bg-card/60 p-4 space-y-4">
-              <h3 className="text-sm font-semibold text-foreground">
-                Publicación
-              </h3>
-
-              <div className="space-y-2">
-                <Label className="text-xs text-muted-foreground">Estado</Label>
-                {user?.role === "admin" ? (
-                  <Select
-                    value={form.status}
-                    onValueChange={(v: ArticleStatus) =>
-                      setForm((f) => ({
-                        ...f,
-                        status: v,
-                        published_at:
-                          v === "scheduled" || v === "published"
-                            ? f.published_at
-                            : "",
-                      }))
-                    }
-                  >
-                    <SelectTrigger className="bg-accent/40 border-border h-9 text-sm">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="draft">Borrador</SelectItem>
-                      <SelectItem value="in_review">En revisión</SelectItem>
-                      <SelectItem value="published">Publicado</SelectItem>
-                      <SelectItem value="scheduled">
-                        Programar publicación
-                      </SelectItem>
-                      <SelectItem value="archived">Archivado</SelectItem>
-                    </SelectContent>
-                  </Select>
-                ) : (
-                  <>
-                    <Select
-                      value={form.status === "in_review" ? "in_review" : "draft"}
-                      onValueChange={(v: "draft" | "in_review") =>
-                        setForm((f) => ({ ...f, status: v, published_at: "" }))
-                      }
-                    >
-                      <SelectTrigger className="bg-accent/40 border-border h-9 text-sm">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="draft">Borrador</SelectItem>
-                        <SelectItem value="in_review">Enviar a revisión</SelectItem>
-                      </SelectContent>
-                    </Select>
-                    <p className="text-xs text-muted-foreground">
-                      Un editor revisará y publicará el artículo.
-                    </p>
-                  </>
-                )}
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="article-tags" className="text-xs text-muted-foreground">
-                  Temas (separados por coma)
-                </Label>
-                <Input
-                  id="article-tags"
-                  value={form.tags}
-                  onChange={(e) => setForm((f) => ({ ...f, tags: e.target.value }))}
-                  placeholder="IA, OpenAI, Startups"
-                  className="h-9 text-sm"
-                />
-                {form.tags.trim() && (
-                  <div className="flex flex-wrap gap-1">
-                    {form.tags
-                      .split(",")
-                      .map((t) => t.trim())
-                      .filter(Boolean)
-                      .slice(0, 12)
-                      .map((t) => (
-                        <Badge key={t} variant="secondary" className="text-[10px]">
-                          {t}
-                        </Badge>
-                      ))}
-                  </div>
-                )}
-              </div>
-
-              {(form.status === "published" || form.status === "scheduled") && (
-                <div className="space-y-2">
-                  <Label className="text-xs text-muted-foreground">
-                    {form.status === "scheduled"
-                      ? "Publicar automáticamente el"
-                      : "Fecha de publicación"}
-                  </Label>
-                  <Input
-                    type="datetime-local"
-                    value={form.published_at}
-                    min={
-                      form.status === "scheduled"
-                        ? new Date(Date.now() + 60_000)
-                            .toISOString()
-                            .slice(0, 16)
-                        : undefined
-                    }
-                    onChange={(e) =>
-                      setForm((f) => ({ ...f, published_at: e.target.value }))
-                    }
-                    className="bg-accent/40 border-border h-9 text-sm"
-                  />
-                  {form.status === "scheduled" && form.published_at && (
-                    <p className="text-xs text-blue-400 flex items-center gap-1">
-                      <span>⏰</span> El cron publicará este artículo
-                      automáticamente.
-                    </p>
-                  )}
-                  {form.status === "scheduled" && !form.published_at && (
-                    <p className="text-xs text-amber-500">
-                      Selecciona una fecha y hora futura.
-                    </p>
-                  )}
-                </div>
-              )}
-
-              {user?.role === "admin" && (
-              <div className="space-y-3 pt-1">
-                <div className="space-y-1">
-                  <div className="flex items-center justify-between">
-                    <Label className="text-xs text-muted-foreground cursor-pointer">
-                      Destacado
-                    </Label>
-                    <Switch
-                      checked={form.featured}
-                      onCheckedChange={(v) =>
-                        setForm((f) => ({
-                          ...f,
-                          featured: v,
-                          trending: v ? f.trending : false,
-                        }))
-                      }
-                    />
-                  </div>
-                  {willDisplaceFeatured && (
-                    <p className="text-[11px] text-amber-400 leading-snug">
-                      Ya hay 5 destacados. Al guardar se quitará el más antiguo.
-                    </p>
-                  )}
-                </div>
-                <div className="space-y-1">
-                  <div className="flex items-center justify-between">
-                    <Label className="text-xs text-muted-foreground cursor-pointer">
-                      Trending
-                    </Label>
-                    <Switch
-                      checked={form.trending}
-                      onCheckedChange={(v) =>
-                        setForm((f) => ({
-                          ...f,
-                          trending: v,
-                          featured: v ? true : f.featured,
-                        }))
-                      }
-                    />
-                  </div>
-                  <p className="text-[11px] text-muted-foreground/50 leading-snug">
-                    Trending aparece primero en destacados y requiere ser
-                    destacado.
-                  </p>
-                </div>
-              </div>
-              )}
-            </div>
-
-            {/* Category */}
-            <div className="rounded-xl border border-border bg-card/60 p-4 space-y-3">
-              <h3 className="text-sm font-semibold text-foreground">
-                Categoría
-              </h3>
-              <div className="space-y-2">
-                <Label className="text-xs text-muted-foreground">
-                  Categoría *
-                </Label>
-                <Select
-                  value={form.category_id}
-                  onValueChange={(v) =>
-                    setForm((f) => ({
-                      ...f,
-                      category_id: v,
-                      subcategory_id: "",
-                    }))
-                  }
-                >
-                  <SelectTrigger className="bg-accent/40 border-border h-9 text-sm">
-                    <SelectValue placeholder="Seleccionar…" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {categories.map((c) => (
-                      <SelectItem key={c.id} value={String(c.id)}>
-                        {c.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-
-              {subcategories.length > 0 && (
-                <div className="space-y-2">
-                  <Label className="text-xs text-muted-foreground">
-                    Subcategoría
-                  </Label>
-                  <Select
-                    value={form.subcategory_id || "none"}
-                    onValueChange={(v) =>
-                      setForm((f) => ({
-                        ...f,
-                        subcategory_id: v === "none" ? "" : v,
-                      }))
-                    }
-                  >
-                    <SelectTrigger className="bg-accent/40 border-border h-9 text-sm">
-                      <SelectValue placeholder="Ninguna" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="none">Ninguna</SelectItem>
-                      {subcategories.map((sc) => (
-                        <SelectItem key={sc.id} value={String(sc.id)}>
-                          {sc.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-              )}
-            </div>
-
-            {/* Author */}
-            <div className="rounded-xl border border-border bg-card/60 p-4 space-y-3">
-              <h3 className="text-sm font-semibold text-foreground">Autor</h3>
-              {user?.role === "admin" ? (
-                <Select
-                  value={form.author_id}
-                  onValueChange={(v) =>
-                    setForm((f) => ({ ...f, author_id: v }))
-                  }
-                >
-                  <SelectTrigger className="bg-accent/40 border-border h-9 text-sm">
-                    <SelectValue placeholder="Seleccionar autor…" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {authors.map((a) => (
-                      <SelectItem key={a.id} value={String(a.id)}>
-                        {a.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              ) : (
-                <p className="text-sm text-muted-foreground">
-                  {authors.find((a) => a.id === user?.author_id)?.name ??
-                    "Tu perfil de autor"}
-                </p>
-              )}
-            </div>
-
-            {/* Meta */}
-            <div className="rounded-xl border border-border bg-card/60 p-4 space-y-3">
-              <h3 className="text-sm font-semibold text-foreground">Meta</h3>
-              <div className="space-y-2">
-                <Label className="text-xs text-muted-foreground">
-                  Tiempo de lectura
-                </Label>
-                <div className="flex items-center gap-2">
-                  <div className="bg-accent/40 border border-border rounded-md h-8 px-3 flex items-center text-sm text-foreground w-24 select-none">
-                    {form.read_time_minutes} min
-                  </div>
-                  <span className="text-[10px] text-blue-400/70 font-medium">
-                    Auto
-                  </span>
-                </div>
-                <p className="text-[11px] text-muted-foreground/60">
-                  Calculado desde el contenido
-                </p>
-              </div>
-            </div>
+            <Button className="h-10 bg-brand px-4 text-brand-foreground hover:bg-brand/90" onClick={() => setPublishOpen(true)}>
+              {canPublish ? null : <Send className="mr-1.5 h-4 w-4" />}
+              {primaryLabel}
+            </Button>
           </div>
         </div>
-      </form>
+        <div className="flex items-center justify-between border-t px-4 py-1 text-[11px] text-muted-foreground sm:hidden">
+          <span aria-live="polite">{saveIndicator}</span>
+          <button type="button" className="inline-flex h-8 items-center gap-1 font-semibold text-foreground" onClick={() => setPreviewOpen(true)}>
+            <Eye className="h-3.5 w-3.5" /> Vista previa
+          </button>
+        </div>
+      </div>
 
-      {/* ── Article preview modal ─────────────────────────────── */}
-      <Dialog open={showPreview} onOpenChange={setShowPreview}>
-        <DialogContent className="max-w-2xl w-[calc(100vw-1rem)] sm:w-full max-h-[90vh] p-0 overflow-hidden flex flex-col gap-0">
-          <DialogHeader className="px-6 pt-5 pb-4 border-b border-border flex-shrink-0">
-            <div className="flex items-center gap-3">
-              <DialogTitle className="text-base font-semibold flex-1">
-                Vista previa antes de guardar
-              </DialogTitle>
-              {user?.role === "admin" ? (
-                <Badge className="bg-green-500/15 text-green-400 border border-green-500/30 text-xs font-medium">
-                  {previewStatusLabel}
-                </Badge>
-              ) : (
-                <Badge className="bg-yellow-500/15 text-yellow-400 border border-yellow-500/30 text-xs font-medium">
-                  {previewStatusLabel}
-                </Badge>
-              )}
-            </div>
-            {willDisplaceFeatured && (
-              <div className="mt-2 flex items-start gap-2 rounded-lg bg-amber-500/10 border border-amber-500/30 px-3 py-2">
-                <span className="text-amber-400 mt-0.5">⚠️</span>
-                <p className="text-xs text-amber-300 leading-snug">
-                  Ya existen <strong>5 artículos destacados</strong>. Al
-                  guardar, el artículo destacado más antiguo será removido
-                  automáticamente de destacados para dar lugar a este.
-                </p>
-              </div>
+      {/* Banners */}
+      {recover && (
+        <div className="mx-auto mt-4 flex max-w-[720px] flex-wrap items-center gap-3 rounded-xl border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm">
+          <History className="h-4 w-4 shrink-0 text-amber-600" />
+          <span className="flex-1">Encontramos cambios sin guardar de {formatRelative(new Date(recover.at))}.</span>
+          <Button size="sm" className="h-9" onClick={() => { formik.setValues(recover.values); setDirty(true); setRecover(null); }}>Recuperar</Button>
+          <Button size="sm" variant="ghost" className="h-9" onClick={() => { try { localStorage.removeItem(backupKey(articleId)); } catch { /* ignore */ } setRecover(null); }}>Descartar</Button>
+        </div>
+      )}
+      {(() => {
+        const last = notes[0];
+        return last && last.action === "returned" && serverStatus === "draft" ? (
+          <div className="mx-auto mt-4 max-w-[720px] rounded-xl border border-violet-500/40 bg-violet-500/10 px-4 py-3 text-sm">
+            <p className="font-semibold">Devuelto con comentarios · {last.user_name ?? "Editor"} · {formatRelative(last.created_at)}</p>
+            {last.note && <p className="mt-1 whitespace-pre-wrap text-muted-foreground">“{last.note}”</p>}
+          </div>
+        ) : null;
+      })()}
+      {pendingRevision && (
+        <div className="mx-auto mt-4 max-w-[720px] rounded-xl border border-sky-500/40 bg-sky-500/10 px-4 py-3 text-sm">
+          Tienes cambios enviados a revisión ({formatRelative(pendingRevision.created_at)}). Si vuelves a enviar, reemplazarán a los anteriores.
+        </div>
+      )}
+      {isLive && !canPublish && (
+        <div className="mx-auto mt-4 max-w-[720px] rounded-xl border bg-muted/50 px-4 py-3 text-sm text-muted-foreground">
+          Este artículo está publicado. Tus cambios se enviarán a revisión y la versión publicada no cambiará hasta que un editor los apruebe.
+        </div>
+      )}
+
+      {/* ── Canvas + panel ──────────────────────────────────────── */}
+      <div className={cn("grid gap-0", panelOpen && "lg:grid-cols-[minmax(0,1fr)_360px]")}>
+        <main className="min-w-0 px-4 pt-8 sm:px-8 sm:pt-12">
+          <div className="mx-auto max-w-[720px]">
+            {/* Cover */}
+            {v.image_url ? (
+              <button type="button" onClick={() => (window.innerWidth < 1024 ? setMobilePanel(true) : setPanelOpen(true))} className="group relative mb-8 block w-full overflow-hidden rounded-xl" aria-label="Cambiar imagen principal">
+                <img src={v.image_url} alt="" className="aspect-[16/9] w-full object-cover" />
+                <span className="absolute inset-0 flex items-center justify-center bg-black/0 text-sm font-semibold text-white opacity-0 transition group-hover:bg-black/40 group-hover:opacity-100">Cambiar imagen</span>
+              </button>
+            ) : (
+              <button type="button" onClick={() => (window.innerWidth < 1024 ? setMobilePanel(true) : setPanelOpen(true))} className="mb-6 inline-flex h-10 items-center gap-2 rounded-lg px-2 text-sm text-muted-foreground hover:bg-muted hover:text-foreground">
+                <ImagePlus className="h-4 w-4" /> Añadir imagen principal
+              </button>
             )}
-          </DialogHeader>
 
-          <div className="flex-1 overflow-y-auto min-h-0">
-            <div className="px-6 py-5 space-y-5">
-              {form.image_url && (
-                <img
-                  src={form.image_url}
-                  alt={form.title}
-                  className="w-full max-h-56 object-cover rounded-xl"
-                  onError={(e) => (e.currentTarget.style.display = "none")}
-                />
-              )}
+            {/* Title */}
+            <label htmlFor="ed-title" className="sr-only">Título</label>
+            <textarea
+              id="ed-title"
+              rows={1}
+              value={v.title}
+              onChange={(e) => {
+                formik.setFieldValue("title", e.target.value.replace(/\n/g, " "));
+                e.currentTarget.style.height = "auto";
+                e.currentTarget.style.height = `${e.currentTarget.scrollHeight}px`;
+              }}
+              onKeyDown={(e) => e.key === "Enter" && (e.preventDefault(), document.getElementById("ed-excerpt")?.focus())}
+              ref={(el) => {
+                if (el) {
+                  el.style.height = "auto";
+                  el.style.height = `${el.scrollHeight}px`;
+                }
+              }}
+              placeholder="Título"
+              maxLength={200}
+              className="w-full resize-none overflow-hidden bg-transparent font-display text-[2rem] font-bold leading-[1.1] tracking-[-0.02em] outline-none placeholder:text-muted-foreground/40 sm:text-[2.6rem]"
+            />
+            {formik.touched.title && formik.errors.title && <p role="alert" className="text-sm text-destructive">{formik.errors.title}</p>}
 
-              <div className="space-y-1">
-                {form.category_id && (
-                  <p className="text-xs font-semibold uppercase tracking-wider text-blue-400">
-                    {
-                      categories.find((c) => String(c.id) === form.category_id)
-                        ?.name
-                    }
-                  </p>
-                )}
-                <h1 className="text-xl font-bold text-foreground leading-snug">
-                  {form.title || "Sin título"}
-                </h1>
-              </div>
+            {/* Dek */}
+            <label htmlFor="ed-excerpt" className="sr-only">Resumen</label>
+            <textarea
+              id="ed-excerpt"
+              rows={2}
+              value={v.excerpt}
+              onChange={(e) => {
+                formik.setFieldValue("excerpt", e.target.value.replace(/\n/g, " "));
+                e.currentTarget.style.height = "auto";
+                e.currentTarget.style.height = `${e.currentTarget.scrollHeight}px`;
+              }}
+              placeholder="Resumen: una o dos frases que enganchen al lector"
+              maxLength={300}
+              className="mt-3 w-full resize-none overflow-hidden bg-transparent font-body text-lg leading-relaxed text-muted-foreground outline-none placeholder:text-muted-foreground/40 sm:text-xl"
+            />
 
-              <div className="flex items-center gap-3 text-xs text-muted-foreground border-y border-border py-2.5">
-                <span className="font-medium">
-                  {authors.find((a) => String(a.id) === form.author_id)?.name ??
-                    "—"}
-                </span>
-                <span>·</span>
-                <span>{form.read_time_minutes} min de lectura</span>
-                {form.category_id && (
-                  <>
-                    <span>·</span>
-                    <span>
-                      {
-                        categories.find(
-                          (c) => String(c.id) === form.category_id,
-                        )?.name
-                      }
-                    </span>
-                  </>
-                )}
-              </div>
+            <div className="mb-6 mt-4 flex flex-wrap items-center gap-x-3 gap-y-1 border-b pb-4 text-xs text-muted-foreground">
+              <span>Por <span className="font-semibold text-foreground">{authorName}</span></span>
+              <span aria-hidden>·</span>
+              <span className="tabular-nums">{words.toLocaleString("es-MX")} palabras</span>
+              <span aria-hidden>·</span>
+              <span>{readMinutes} min de lectura</span>
+              <span className="ml-auto hidden md:inline">Escribe <kbd className="rounded border px-1 font-sans">/</kbd> para insertar · <kbd className="rounded border px-1 font-sans">⌘S</kbd> guardar</span>
+            </div>
 
-              {form.excerpt && (
-                <p className="text-sm text-muted-foreground italic border-l-2 border-blue-500/40 pl-3 leading-relaxed">
-                  {form.excerpt}
-                </p>
-              )}
+            <StoryEditor value={v.html} onChange={(html) => formik.setFieldValue("html", html, false)} onUploadImage={uploadInline} />
+            {formik.errors.html && formik.submitCount > 0 && <p role="alert" className="mt-2 text-sm text-destructive">{formik.errors.html}</p>}
+          </div>
+        </main>
 
-              {blocks.length > 0 && (
-                <div className="space-y-4 pt-1">
-                  {blocks.map((block, idx) => (
-                    <BlockPreview key={idx} block={block} />
+        {panelOpen && (
+          <aside className="hidden border-l bg-card/40 lg:block" aria-label="Detalles del artículo">
+            <div className="sticky top-14 max-h-[calc(100vh-3.5rem)] overflow-y-auto px-5 pt-6">{details}</div>
+          </aside>
+        )}
+      </div>
+
+      {/* Mobile details sheet */}
+      <Sheet open={mobilePanel} onOpenChange={setMobilePanel}>
+        <SheetContent side="bottom" className="max-h-[88vh] overflow-y-auto rounded-t-2xl">
+          <SheetHeader>
+            <SheetTitle className="text-left font-display">Detalles del artículo</SheetTitle>
+          </SheetHeader>
+          <div className="mt-4">{details}</div>
+        </SheetContent>
+      </Sheet>
+
+      {/* Publish / submit dialog */}
+      <Sheet open={publishOpen} onOpenChange={setPublishOpen}>
+        <SheetContent side={window.innerWidth < 640 ? "bottom" : "right"} className="w-full overflow-y-auto sm:max-w-md max-sm:max-h-[90vh] max-sm:rounded-t-2xl">
+          <SheetHeader>
+            <SheetTitle className="text-left font-display text-2xl">{primaryLabel}</SheetTitle>
+          </SheetHeader>
+          <div className="mt-5 space-y-6">
+            <ul className="space-y-2">
+              {checklist.map((c) => (
+                <li key={c.label} className="flex items-center gap-2.5 text-sm">
+                  {c.ok ? (
+                    <span className="flex h-5 w-5 items-center justify-center rounded-full bg-emerald-500 text-white"><Check className="h-3 w-3" /></span>
+                  ) : c.soft ? (
+                    <AlertTriangle className="h-5 w-5 text-amber-500" />
+                  ) : (
+                    <span className="flex h-5 w-5 items-center justify-center rounded-full bg-destructive text-white"><X className="h-3 w-3" /></span>
+                  )}
+                  <span className={cn(!c.ok && !c.soft && "font-semibold")}>{c.label}</span>
+                  {!c.ok && c.soft && <span className="text-xs text-muted-foreground">(recomendado)</span>}
+                </li>
+              ))}
+            </ul>
+
+            {canPublish && !isLive && (
+              <div className="space-y-2">
+                <p className="kicker !text-muted-foreground">Cuándo</p>
+                <div className="grid grid-cols-2 gap-2">
+                  {(["now", "later"] as const).map((m) => (
+                    <button key={m} type="button" onClick={() => setScheduleMode(m)} aria-pressed={scheduleMode === m}
+                      className={cn("h-11 rounded-lg border text-sm font-semibold", scheduleMode === m ? "border-brand bg-brand/10 ring-1 ring-brand/30" : "hover:border-foreground/40")}>
+                      {m === "now" ? "Ahora" : "Programar"}
+                    </button>
                   ))}
                 </div>
-              )}
+                {scheduleMode === "later" && (
+                  <div>
+                    <input type="datetime-local" className={cn(field, "mt-2")} value={v.publish_local} onChange={(e) => formik.setFieldValue("publish_local", e.target.value)} />
+                    <p className="mt-1 text-xs text-muted-foreground">Hora de la redacción ({tz.replace("_", " ")})</p>
+                  </div>
+                )}
+              </div>
+            )}
 
-              {blocks.length === 0 && !form.excerpt && (
-                <p className="text-center text-sm text-muted-foreground py-6">
-                  Sin contenido aún.
-                </p>
-              )}
+            {!canPublish && (
+              <p className="rounded-lg bg-muted/60 p-3 text-sm text-muted-foreground">
+                {isLive
+                  ? "Tus cambios quedarán pendientes hasta que un editor los apruebe. El artículo publicado no cambiará mientras tanto."
+                  : "Un editor revisará tu historia. Recibirás una notificación cuando sea aprobada o si necesita cambios."}
+              </p>
+            )}
+
+            <Button className="h-12 w-full bg-brand text-base text-brand-foreground hover:bg-brand/90" disabled={editorState?.saving || blocking.length > 0} onClick={() => void confirmPublish()}>
+              {editorState?.saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+              {canPublish
+                ? isLive
+                  ? "Actualizar publicación"
+                  : scheduleMode === "later"
+                    ? "Programar publicación"
+                    : "Publicar ahora"
+                : isLive
+                  ? "Enviar cambios a revisión"
+                  : "Enviar a revisión"}
+            </Button>
+          </div>
+        </SheetContent>
+      </Sheet>
+
+      {/* Preview */}
+      <Dialog open={previewOpen} onOpenChange={setPreviewOpen}>
+        <DialogContent className="flex h-[92vh] w-[calc(100vw-1rem)] max-w-6xl flex-col gap-0 p-0 sm:w-full">
+          <div className="flex items-center gap-2 border-b px-4 py-2.5">
+            <DialogTitle className="font-display text-lg">Vista previa</DialogTitle>
+            <div className="ml-auto inline-flex rounded-lg border p-0.5">
+              {([["phone", Smartphone, "Móvil"], ["desktop", Monitor, "Escritorio"]] as const).map(([d, Icon, l]) => (
+                <button key={d} type="button" onClick={() => setPreviewDevice(d)} aria-pressed={previewDevice === d} aria-label={l}
+                  className={cn("inline-flex h-9 w-9 items-center justify-center rounded-md", previewDevice === d ? "bg-foreground text-background" : "text-muted-foreground")}>
+                  <Icon className="h-4 w-4" />
+                </button>
+              ))}
             </div>
           </div>
+          <div className="flex-1 overflow-y-auto bg-muted/40 p-4">
+            <article className={cn("mx-auto rounded-xl bg-background shadow-sm transition-all", previewDevice === "phone" ? "max-w-[390px] p-4" : "max-w-[900px] p-10")}>
+              <p className="kicker">{categories.find((c) => String(c.id) === v.category_id)?.name}</p>
+              <h1 className={cn("mt-3 font-display font-bold leading-[1.08] tracking-[-0.02em]", previewDevice === "phone" ? "text-[1.9rem]" : "text-[2.8rem]")}>{v.title || "Título"}</h1>
+              {v.excerpt && <p className="mt-3 font-body text-lg text-muted-foreground">{v.excerpt}</p>}
+              <p className="mt-4 border-y py-3 text-sm"><span className="font-semibold">{authorName}</span> · {readMinutes} min de lectura</p>
+              {v.image_url && <img src={v.image_url} alt="" className="mt-6 aspect-[16/9] w-full rounded-lg object-cover" />}
+              <div className="article-content mt-6" dangerouslySetInnerHTML={{ __html: v.html }} />
+            </article>
+          </div>
+        </DialogContent>
+      </Dialog>
 
-          <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-border bg-card/60 flex-shrink-0">
-            {saveError && (
-              <p className="text-xs text-red-400 mr-auto">{saveError}</p>
-            )}
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setShowPreview(false)}
-              className="h-9"
-            >
-              Seguir editando
-            </Button>
-            <Button
-              size="sm"
-              onClick={performSave}
-              disabled={saving}
-              className="bg-blue-600 hover:bg-blue-700 text-white h-9 shadow-lg shadow-blue-500/20"
-            >
-              {saving ? (
-                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-              ) : (
-                <Save className="w-4 h-4 mr-2" />
-              )}
-              {saving ? "Guardando…" : previewSaveLabel}
+      {/* Conflict */}
+      <Dialog open={conflict} onOpenChange={setConflict}>
+        <DialogContent className="w-[calc(100vw-1rem)] max-w-md sm:w-full">
+          <DialogTitle className="font-display text-xl">Alguien más editó este artículo</DialogTitle>
+          <p className="text-sm text-muted-foreground">
+            Se guardó otra versión mientras escribías. Tu texto está a salvo en este dispositivo.
+          </p>
+          <div className="mt-4 flex flex-col gap-2 sm:flex-row-reverse">
+            <Button className="h-11" onClick={() => { setConflict(false); void doSave({ force: true }); }}>Guardar mi versión</Button>
+            <Button variant="outline" className="h-11" onClick={() => { setConflict(false); setLoaded(false); if (articleId) dispatch(fetchAdminArticle(articleId)); }}>
+              Cargar la otra versión
             </Button>
           </div>
+          <p className="mt-2 text-xs text-muted-foreground">Si cargas la otra versión podrás recuperar la tuya desde el aviso de cambios sin guardar.</p>
         </DialogContent>
       </Dialog>
     </div>
   );
-}
-
-function BlockPreview({ block }: { block: UpsertBlockPayload }) {
-  const previewBlock: ContentBlock = {
-    id: block.id ?? 0,
-    article_id: 0,
-    position: block.position,
-    type: block.type,
-    data: block.data,
-  };
-  return <ArticleBlock block={previewBlock} />;
 }

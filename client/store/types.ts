@@ -48,6 +48,8 @@ export interface ArticlesState {
   } | null;
   categoryPageLoading: boolean;
   categoryPageError: string | null;
+  /** New slug when the requested article was renamed (navigate + replace) */
+  redirectSlug: string | null;
 }
 
 export interface CategoriesState {
@@ -248,6 +250,24 @@ export interface CommentsState {
   articleSlug: string | null;
 }
 
+export interface AdminReviewsState {
+  queue: import("@shared/api").ReviewQueueData | null;
+  loading: boolean;
+  error: string | null;
+  /** Key of the action in flight, e.g. "article:12" or "revision:40" */
+  actingKey: string | null;
+  notesByArticle: Record<number, import("@shared/api").ReviewNote[]>;
+  notesLoading: boolean;
+}
+
+export interface NotificationsState {
+  items: import("@shared/api").AdminNotification[];
+  unreadCount: number;
+  loading: boolean;
+  error: string | null;
+  lastFetchedAt: number | null;
+}
+
 export interface RootState {
   articles: ArticlesState;
   categories: CategoriesState;
@@ -269,6 +289,9 @@ export interface RootState {
   tags: TagsState;
   searchPage: SearchPageState;
   bookmarks: BookmarksState;
+  articleEditor: import("./slices/articleEditorSlice").ArticleEditorState;
   revisions: RevisionsState;
   adminAudit: AdminAuditState;
+  adminReviews: AdminReviewsState;
+  notifications: NotificationsState;
 }

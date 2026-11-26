@@ -33,6 +33,7 @@ const initialState: ArticlesState = {
   categoryPagePagination: null,
   categoryPageLoading: false,
   categoryPageError: null,
+  redirectSlug: null,
 };
 
 // ── Thunks ───────────────────────────────────────────────────
@@ -82,7 +83,11 @@ export const fetchArticleFull = createAsyncThunk(
       const { data } = await axios.get<ArticleFullResponse>(
         `/api/articles/${slug}`,
       );
-      return data.data;
+      const payload = data.data;
+      if ("redirect" in payload) {
+        return { kind: "redirect" as const, redirect: payload.redirect };
+      }
+      return { kind: "article" as const, ...payload };
     } catch (err: any) {
       return rejectWithValue(
         err.response?.data?.message ?? "Article not found",
@@ -163,6 +168,7 @@ const articlesSlice = createSlice({
       state.categoryFilter = action.payload;
     },
     clearCurrent(state) {
+      state.redirectSlug = null;
       state.current = null;
       state.detailError = null;
       state.currentBlocks = [];
@@ -200,6 +206,11 @@ const articlesSlice = createSlice({
       })
       .addCase(fetchArticleFull.fulfilled, (state, action) => {
         state.detailLoading = false;
+        if (action.payload.kind === "redirect") {
+          state.redirectSlug = action.payload.redirect;
+          return;
+        }
+        state.redirectSlug = null;
         state.current = action.payload.article;
         state.currentBlocks = action.payload.blocks;
         state.currentRelated = action.payload.related;
@@ -255,6 +266,7 @@ export const selectByCategory = (category: string) => (s: RootState) =>
 // Consolidated article detail
 export const selectCurrentRelated = (s: RootState) => s.articles.currentRelated;
 export const selectCurrentTags = (s: RootState) => s.articles.currentTags;
+export const selectRedirectSlug = (s: RootState) => s.articles.redirectSlug;
 
 // Consolidated category page
 export const selectCategoryPageCategory = (s: RootState) =>

@@ -14,7 +14,7 @@ import {
   selectAdminToken,
 } from "@/store/slices/adminAuthSlice";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { SITE_LOGO } from "@/lib/branding";
+import Logo from "@/components/Logo";
 import MetaHead from "@/components/MetaHead";
 import { Button } from "@/components/ui/button";
 import {
@@ -32,9 +32,15 @@ import {
   Mail,
   Settings,
   Activity,
+  ClipboardCheck,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { fetchAdminSettings, selectAdminAppVersion } from "@/store/slices/adminSettingsSlice";
+import { fetchNotifications } from "@/store/slices/notificationsSlice";
+import { fetchReviewQueue, selectReviewCount } from "@/store/slices/adminReviewsSlice";
+import NotificationBell from "@/components/admin/NotificationBell";
+
+const POLL_MS = 60_000;
 
 const ALL_NAV_ITEMS = [
   {
@@ -48,6 +54,12 @@ const ALL_NAV_ITEMS = [
     icon: FileText,
     label: "Artículos",
     adminOnly: false,
+  },
+  {
+    to: "/admin/reviews",
+    icon: ClipboardCheck,
+    label: "Revisión",
+    adminOnly: true,
   },
   { to: "/admin/authors", icon: Users, label: "Autores", adminOnly: true },
   {
@@ -105,7 +117,7 @@ function AdminGuard({ children }: { children: React.ReactNode }) {
   if (!token || !user) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background">
-        <div className="w-8 h-8 rounded-full border-2 border-blue-500 border-t-transparent animate-spin" />
+        <div className="w-8 h-8 rounded-full border-2 border-brand border-t-transparent animate-spin" />
       </div>
     );
   }
@@ -120,12 +132,34 @@ export default function AdminLayout() {
   const user = useAppSelector(selectAdminUser);
   const appVersion = useAppSelector(selectAdminAppVersion);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const reviewCount = useAppSelector(selectReviewCount);
 
   useEffect(() => {
     if (user?.role === "admin") {
       dispatch(fetchAdminSettings());
     }
   }, [dispatch, user?.role]);
+
+  // Notifications (+ review queue badge for admins): every 60s while the
+  // tab is visible, and immediately when the window regains focus
+  useEffect(() => {
+    if (!user) return;
+    const isAdmin = user.role === "admin";
+    const refresh = () => {
+      if (document.visibilityState !== "visible") return;
+      dispatch(fetchNotifications());
+      if (isAdmin) dispatch(fetchReviewQueue());
+    };
+    refresh();
+    const timer = window.setInterval(refresh, POLL_MS);
+    window.addEventListener("focus", refresh);
+    document.addEventListener("visibilitychange", refresh);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener("focus", refresh);
+      document.removeEventListener("visibilitychange", refresh);
+    };
+  }, [dispatch, user?.id, user?.role]);
 
   const handleLogout = () => {
     dispatch(logout());
@@ -158,21 +192,22 @@ export default function AdminLayout() {
     <div className={cn("flex flex-col h-full", mobile ? "p-4" : "p-6")}>
       {/* Logo */}
       <div className="flex items-center gap-3 mb-8">
-        <div className="flex-1 min-w-0">
-          <img
-            src={SITE_LOGO}
-            alt="INTELINOTA"
-            className="h-6 w-auto object-contain"
-          />
-          <div className="text-xs text-muted-foreground mt-0.5">
-            Panel Admin
+        <Link
+          to="/admin/dashboard"
+          onClick={() => setSidebarOpen(false)}
+          className="flex-1 min-w-0 rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+        >
+          <Logo className="h-6" />
+          <div className="kicker mt-1.5 text-muted-foreground">
+            Redacción
           </div>
-        </div>
+        </Link>
         {mobile && (
           <Button
             variant="ghost"
             size="icon"
-            className="ml-auto"
+            className="ml-auto h-10 w-10"
+            aria-label="Cerrar menú"
             onClick={() => setSidebarOpen(false)}
           >
             <X className="w-5 h-5" />
@@ -189,15 +224,20 @@ export default function AdminLayout() {
             onClick={() => setSidebarOpen(false)}
             className={({ isActive }) =>
               cn(
-                "flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-150",
+                "flex items-center gap-3 px-3 min-h-10 py-2 rounded-lg text-sm font-medium transition-colors duration-150 border",
                 isActive
-                  ? "bg-blue-600/15 text-blue-400 border border-blue-500/20"
-                  : "text-muted-foreground hover:text-foreground hover:bg-accent/60",
+                  ? "bg-brand/10 text-brand border-brand/20"
+                  : "border-transparent text-muted-foreground hover:text-foreground hover:bg-accent/60",
               )
             }
           >
             <Icon className="w-4 h-4 flex-shrink-0" />
             {label}
+            {to === "/admin/reviews" && reviewCount > 0 && (
+              <span className="ml-auto inline-flex min-w-[20px] h-5 items-center justify-center rounded-full bg-brand px-1.5 text-[11px] font-bold text-white">
+                {reviewCount > 99 ? "99+" : reviewCount}
+              </span>
+            )}
           </NavLink>
         ))}
       </nav>
@@ -215,17 +255,17 @@ export default function AdminLayout() {
                 src={user?.avatar_url ?? undefined}
                 alt={user?.name ?? ""}
               />
-              <AvatarFallback className="bg-blue-600/20 text-blue-400 text-xs font-bold">
+              <AvatarFallback className="bg-brand/15 text-brand text-xs font-bold">
                 {initials}
               </AvatarFallback>
             </Avatar>
             <div className="flex-1 min-w-0">
-              <div className="text-sm font-medium text-foreground truncate group-hover:text-blue-400 transition-colors">
+              <div className="text-sm font-medium text-foreground truncate group-hover:text-brand transition-colors">
                 {user?.name ?? user?.email}
               </div>
               <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
                 {user?.role === "admin" ? (
-                  <Shield className="w-3 h-3 text-blue-400" />
+                  <Shield className="w-3 h-3 text-brand" />
                 ) : (
                   <Pen className="w-3 h-3 text-emerald-400" />
                 )}
@@ -237,8 +277,9 @@ export default function AdminLayout() {
             variant="ghost"
             size="icon"
             onClick={handleLogout}
-            className="w-8 h-8 text-muted-foreground hover:text-foreground flex-shrink-0"
+            className="w-10 h-10 text-muted-foreground hover:text-foreground flex-shrink-0"
             title="Cerrar sesión"
+            aria-label="Cerrar sesión"
           >
             <LogOut className="w-4 h-4" />
           </Button>
@@ -260,48 +301,63 @@ export default function AdminLayout() {
         noIndex
         includeSiteOrganization={false}
       />
-      <div className="h-screen flex bg-background overflow-hidden">
+      {/*
+        Layout: the window is the ONLY scroll container. The desktop sidebar
+        and the top bar are `sticky`, so `position: sticky` elements inside
+        pages keep working (offset them with `top-14` to clear the top bar).
+      */}
+      <div className="min-h-screen flex bg-background">
         {/* Desktop sidebar */}
-        <aside className="hidden lg:flex flex-col w-64 border-r border-border bg-card/40 flex-shrink-0 overflow-y-auto">
+        <aside className="hidden lg:flex flex-col w-64 flex-shrink-0 sticky top-0 h-screen border-r border-border bg-card/40 overflow-y-auto overscroll-contain">
           <Sidebar />
         </aside>
 
-        {/* Mobile sidebar overlay */}
+        {/* Mobile drawer */}
         {sidebarOpen && (
           <div className="lg:hidden fixed inset-0 z-50 flex">
             <div
-              className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+              className="absolute inset-0 bg-black/60 backdrop-blur-sm animate-in fade-in-0"
               onClick={() => setSidebarOpen(false)}
             />
-            <div className="relative z-10 w-72 bg-card border-r border-border">
+            <div className="relative z-10 w-72 max-w-[85vw] h-full overflow-y-auto overscroll-contain bg-card border-r border-border animate-in slide-in-from-left duration-200">
               <Sidebar mobile />
             </div>
           </div>
         )}
 
-        {/* Main content */}
+        {/* Main column */}
         <div className="flex-1 flex flex-col min-w-0">
           {/* Top bar */}
-          <header className="flex items-center gap-4 px-4 sm:px-6 h-14 border-b border-border bg-card/30 backdrop-blur-sm sticky top-0 z-30">
+          <header className="sticky top-0 z-30 flex items-center gap-2 sm:gap-4 px-4 sm:px-6 h-14 border-b border-border bg-background/80 backdrop-blur-md">
             <Button
               variant="ghost"
               size="icon"
-              className="lg:hidden"
+              className="lg:hidden h-10 w-10 -ml-2"
+              aria-label="Abrir menú"
               onClick={() => setSidebarOpen(true)}
             >
               <Menu className="w-5 h-5" />
             </Button>
 
             {/* Breadcrumb */}
-            <div className="flex items-center gap-1.5 text-sm">
-              <span className="text-muted-foreground">Admin</span>
-              <ChevronRight className="w-3.5 h-3.5 text-muted-foreground" />
-              <span className="text-foreground font-medium">{pageTitle}</span>
+            <div className="flex items-center gap-1.5 text-sm min-w-0">
+              <span className="hidden sm:inline text-muted-foreground">
+                Admin
+              </span>
+              <ChevronRight className="hidden sm:block w-3.5 h-3.5 text-muted-foreground" />
+              <span className="text-foreground font-medium truncate">
+                {pageTitle}
+              </span>
+            </div>
+
+            <div className="ml-auto flex items-center gap-2">
+              {/* header-actions */}
+              <NotificationBell />
             </div>
           </header>
 
           {/* Page content */}
-          <main className="flex-1 p-4 sm:p-6 overflow-auto">
+          <main className="flex-1 min-w-0 px-4 py-4 sm:px-6 sm:py-6">
             <Outlet />
           </main>
         </div>

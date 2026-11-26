@@ -16,8 +16,16 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { Loader2, Upload, ImageIcon, X, Crop as CropIcon } from "lucide-react";
+import {
+  Loader2,
+  Upload,
+  ImageIcon,
+  X,
+  Crop as CropIcon,
+  RotateCcw,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
+import { logger } from "@/utils/logger";
 
 function centerAspectCrop(
   mediaWidth: number,
@@ -31,38 +39,58 @@ function centerAspectCrop(
   );
 }
 
-async function getCroppedBlob(
+const MAX_EDGE = 2000;
+const WEBP_QUALITY = 0.82;
+const JPEG_QUALITY = 0.85;
+
+function canvasToBlob(
+  canvas: HTMLCanvasElement,
+  mime: string,
+  quality: number,
+): Promise<Blob | null> {
+  return new Promise((resolve) => canvas.toBlob(resolve, mime, quality));
+}
+
+/**
+ * Crops, downscales so the longest side is ≤ MAX_EDGE, and encodes as WebP
+ * (falls back to JPEG when the browser can't encode WebP, e.g. old Safari).
+ * Keeps phone photos well below Vercel's 4.5MB request body limit.
+ */
+async function getCroppedImage(
   image: HTMLImageElement,
   crop: PixelCrop,
-  outputMime = "image/jpeg",
-  quality = 0.92,
-): Promise<Blob> {
-  const canvas = document.createElement("canvas");
+): Promise<{ blob: Blob; mime: string; ext: string }> {
   const scaleX = image.naturalWidth / image.width;
   const scaleY = image.naturalHeight / image.height;
-  canvas.width = Math.round(crop.width * scaleX);
-  canvas.height = Math.round(crop.height * scaleY);
+  const srcW = crop.width * scaleX;
+  const srcH = crop.height * scaleY;
+  const ratio = Math.min(1, MAX_EDGE / Math.max(srcW, srcH));
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.max(1, Math.round(srcW * ratio));
+  canvas.height = Math.max(1, Math.round(srcH * ratio));
   const ctx = canvas.getContext("2d");
   if (!ctx) throw new Error("Could not get canvas context");
+  ctx.imageSmoothingEnabled = true;
   ctx.imageSmoothingQuality = "high";
   ctx.drawImage(
     image,
     crop.x * scaleX,
     crop.y * scaleY,
-    crop.width * scaleX,
-    crop.height * scaleY,
+    srcW,
+    srcH,
     0,
     0,
     canvas.width,
     canvas.height,
   );
-  return new Promise((resolve, reject) => {
-    canvas.toBlob(
-      (blob) => (blob ? resolve(blob) : reject(new Error("Canvas is empty"))),
-      outputMime,
-      quality,
-    );
-  });
+  const webp = await canvasToBlob(canvas, "image/webp", WEBP_QUALITY);
+  // Browsers without WebP encoding silently return PNG instead.
+  if (webp && webp.type === "image/webp") {
+    return { blob: webp, mime: "image/webp", ext: "webp" };
+  }
+  const jpeg = await canvasToBlob(canvas, "image/jpeg", JPEG_QUALITY);
+  if (!jpeg) throw new Error("Canvas is empty");
+  return { blob: jpeg, mime: "image/jpeg", ext: "jpg" };
 }
 
 function blobToBase64(blob: Blob): Promise<string> {
@@ -119,6 +147,13 @@ export default function ImageUploadCrop({
   const [dialogOpen, setDialogOpen] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
+  const [progress, setProgress] = useState<number | null>(null);
+  /** Encoded image kept so "Reintentar" doesn't re-encode. */
+  const preparedRef = useRef<{
+    data_base64: string;
+    filename: string;
+    mime_type: string;
+  } | null>(null);
 
   const handleFileChange = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -159,34 +194,61 @@ export default function ImageUploadCrop({
     [aspectRatio],
   );
 
+  const doUpload = async (prepared: {
+    data_base64: string;
+    filename: string;
+    mime_type: string;
+  }) => {
+    setProgress(0);
+    const result = await dispatch(
+      uploadMedia({ ...prepared, onProgress: (p) => setProgress(p) }),
+    );
+    if (uploadMedia.rejected.match(result)) {
+      throw new Error(String(result.payload ?? "Error al subir"));
+    }
+    onChange(result.payload.url);
+    preparedRef.current = null;
+    setDialogOpen(false);
+    setSrcUrl(null);
+  };
+
   const handleConfirm = async () => {
     if (!imgRef.current || !completedCrop) return;
     setUploading(true);
     setUploadError(null);
     try {
-      const blob = await getCroppedBlob(imgRef.current, completedCrop);
+      const { blob, mime, ext } = await getCroppedImage(
+        imgRef.current,
+        completedCrop,
+      );
       const data_base64 = await blobToBase64(blob);
-
-      const result = await dispatch(
-        uploadMedia({
-          data_base64,
-          filename: `${uploadId.replace(/[^\w.\-]/g, "_")}.jpg`,
-          mime_type: "image/jpeg",
-        }),
-      );
-      if (uploadMedia.rejected.match(result)) {
-        throw new Error(String(result.payload ?? "Upload error"));
-      }
-
-      onChange(result.payload.url);
-      setDialogOpen(false);
-      setSrcUrl(null);
+      preparedRef.current = {
+        data_base64,
+        filename: `${uploadId.replace(/[^\w.\-]/g, "_")}.${ext}`,
+        mime_type: mime,
+      };
+      await doUpload(preparedRef.current);
     } catch (err: any) {
-      setUploadError(
-        err?.response?.data?.message ?? err?.message ?? "Upload error",
-      );
+      logger.error("ImageUploadCrop upload failed", err);
+      setUploadError(err?.message ?? "Error al subir");
     } finally {
       setUploading(false);
+      setProgress(null);
+    }
+  };
+
+  const handleRetry = async () => {
+    if (!preparedRef.current) return handleConfirm();
+    setUploading(true);
+    setUploadError(null);
+    try {
+      await doUpload(preparedRef.current);
+    } catch (err: any) {
+      logger.error("ImageUploadCrop retry failed", err);
+      setUploadError(err?.message ?? "Error al subir");
+    } finally {
+      setUploading(false);
+      setProgress(null);
     }
   };
 
@@ -194,6 +256,8 @@ export default function ImageUploadCrop({
     if (uploading) return;
     setDialogOpen(false);
     setSrcUrl(null);
+    preparedRef.current = null;
+    setUploadError(null);
   };
 
   return (
@@ -230,7 +294,7 @@ export default function ImageUploadCrop({
             type="button"
             variant="outline"
             size="sm"
-            className="h-8 px-3 text-xs gap-1.5"
+            className="h-10 px-4 text-sm gap-2"
             onClick={() => inputRef.current?.click()}
           >
             <Upload className="w-3.5 h-3.5" />
@@ -241,7 +305,7 @@ export default function ImageUploadCrop({
               type="button"
               variant="ghost"
               size="sm"
-              className="h-7 px-2 text-xs text-muted-foreground hover:text-destructive gap-1"
+              className="h-10 px-3 text-sm text-muted-foreground hover:text-destructive gap-1.5"
               onClick={() => onChange("")}
             >
               <X className="w-3 h-3" />
@@ -254,21 +318,28 @@ export default function ImageUploadCrop({
       <input
         ref={inputRef}
         type="file"
-        accept="image/jpeg,image/png"
+        accept="image/jpeg,image/png,image/webp"
         className="hidden"
         onChange={handleFileChange}
       />
 
       <Dialog open={dialogOpen} onOpenChange={handleClose}>
-        <DialogContent className="max-w-xl w-[calc(100vw-1rem)] sm:w-full">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2 text-sm font-semibold">
-              <CropIcon className="w-4 h-4 text-blue-400" />
+        <DialogContent
+          className={cn(
+            // Mobile: full-screen sheet. Desktop: centered dialog.
+            "flex flex-col gap-3 p-4 w-screen max-w-none h-[100dvh] rounded-none border-0",
+            "pb-[max(1rem,env(safe-area-inset-bottom))]",
+            "sm:h-auto sm:max-h-[90vh] sm:w-full sm:max-w-xl sm:rounded-xl sm:border sm:p-6",
+          )}
+        >
+          <DialogHeader className="text-left">
+            <DialogTitle className="flex items-center gap-2 text-base font-semibold">
+              <CropIcon className="w-4 h-4 text-brand" />
               Recortar imagen
             </DialogTitle>
           </DialogHeader>
 
-          <div className="flex items-center justify-center min-h-[200px] max-h-[60vh] overflow-auto bg-black/30 rounded-lg">
+          <div className="flex-1 min-h-0 flex items-center justify-center overflow-auto bg-black/80 rounded-lg sm:flex-none sm:min-h-[200px] sm:max-h-[60vh]">
             {srcUrl && (
               <ReactCrop
                 crop={crop}
@@ -276,29 +347,56 @@ export default function ImageUploadCrop({
                 onComplete={(c) => setCompletedCrop(c)}
                 aspect={aspectRatio}
                 className="max-w-full"
+                disabled={uploading}
               >
                 <img
                   ref={imgRef}
                   src={srcUrl}
-                  alt="Crop preview"
+                  alt="Vista previa del recorte"
                   onLoad={onImageLoad}
-                  className="max-h-[55vh] max-w-full"
+                  className="max-h-[calc(100dvh-14rem)] sm:max-h-[55vh] max-w-full"
                 />
               </ReactCrop>
             )}
           </div>
 
-          {uploadError && (
-            <p className="text-xs text-destructive bg-destructive/10 rounded px-3 py-2 border border-destructive/30">
-              {uploadError}
-            </p>
+          {progress != null && (
+            <div className="space-y-1" aria-live="polite">
+              <div className="flex justify-between text-xs text-muted-foreground">
+                <span>{progress < 100 ? "Subiendo…" : "Procesando…"}</span>
+                <span className="tabular-nums">{progress}%</span>
+              </div>
+              <div className="h-1.5 rounded-full bg-accent overflow-hidden">
+                <div
+                  className="h-full bg-brand rounded-full transition-[width] duration-200"
+                  style={{ width: `${progress}%` }}
+                />
+              </div>
+            </div>
           )}
 
-          <DialogFooter className="gap-2">
+          {uploadError && (
+            <div className="flex flex-wrap items-center gap-2 text-sm text-destructive bg-destructive/10 rounded-lg px-3 py-2 border border-destructive/30">
+              <span className="flex-1 min-w-0">{uploadError}</span>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-10 gap-1.5"
+                onClick={handleRetry}
+                disabled={uploading}
+              >
+                <RotateCcw className="w-4 h-4" />
+                Reintentar
+              </Button>
+            </div>
+          )}
+
+          <DialogFooter className="flex-row gap-2 sm:justify-end">
             <Button
               type="button"
               variant="outline"
-              size="sm"
+              className="h-10 flex-1 sm:flex-none"
               onClick={handleClose}
               disabled={uploading}
             >
@@ -306,19 +404,18 @@ export default function ImageUploadCrop({
             </Button>
             <Button
               type="button"
-              size="sm"
               onClick={handleConfirm}
               disabled={uploading || !completedCrop}
-              className="bg-blue-600 hover:bg-blue-700 text-white"
+              className="h-10 flex-1 sm:flex-none bg-brand hover:bg-brand/90 text-brand-foreground"
             >
               {uploading ? (
                 <>
-                  <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />
+                  <Loader2 className="w-4 h-4 mr-1.5 animate-spin" />
                   Subiendo…
                 </>
               ) : (
                 <>
-                  <Upload className="w-3.5 h-3.5 mr-1.5" />
+                  <Upload className="w-4 h-4 mr-1.5" />
                   Aplicar y subir
                 </>
               )}

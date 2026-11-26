@@ -28,6 +28,7 @@ const AdminCategories = lazy(() => import("@/pages/admin/Categories"));
 const AdminNewsletter = lazy(() => import("@/pages/admin/Newsletter"));
 const AdminSettings = lazy(() => import("@/pages/admin/Settings"));
 const AdminActivity = lazy(() => import("@/pages/admin/Activity"));
+const AdminReviews = lazy(() => import("@/pages/admin/Reviews"));
 const TagPage = lazy(() => import("@/pages/Tag"));
 
 function PublicLayout() {
@@ -71,6 +72,7 @@ export default function AppRoutes() {
           <Route path="newsletter" element={<AdminNewsletter />} />
           <Route path="settings" element={<AdminSettings />} />
           <Route path="activity" element={<AdminActivity />} />
+          <Route path="reviews" element={<AdminReviews />} />
           <Route path="profile" element={<Profile />} />
           <Route path="*" element={<Navigate to="dashboard" replace />} />
         </Route>
