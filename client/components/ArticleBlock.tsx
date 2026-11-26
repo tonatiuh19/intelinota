@@ -41,7 +41,7 @@ export default function ArticleBlock({
     case "image":
       if (!data.url || !/^(https?:)?\//.test(data.url)) return null;
       return (
-        <figure className="max-w-measure">
+        <figure className="w-full">
           <button
             type="button"
             className="group relative block w-full cursor-zoom-in overflow-hidden bg-muted"
@@ -81,7 +81,7 @@ export default function ArticleBlock({
     case "youtube":
       if (!data.video_id || !YT_ID.test(data.video_id)) return null;
       return (
-        <figure className="max-w-measure">
+        <figure className="w-full">
           <div className="aspect-video overflow-hidden bg-black">
             <iframe
               src={`https://www.youtube-nocookie.com/embed/${data.video_id}`}
@@ -99,7 +99,7 @@ export default function ArticleBlock({
     case "twitter":
       if (!data.tweet_url || !HTTPS.test(data.tweet_url)) return null;
       return (
-        <figure className="max-w-measure border-y py-5">
+        <figure className="w-full border-y py-5">
           <p className="kicker !text-muted-foreground">Publicación en X</p>
           <a
             href={data.tweet_url}
@@ -128,7 +128,7 @@ export default function ArticleBlock({
 
     case "quote":
       return (
-        <blockquote className="max-w-measure border-t-2 border-rule py-6">
+        <blockquote className="w-full border-t-2 border-rule py-6">
           <span aria-hidden className="block font-display text-6xl leading-[0.5] text-brand">
             “
           </span>
@@ -145,7 +145,7 @@ export default function ArticleBlock({
 
     case "divider":
       return (
-        <div aria-hidden className="max-w-measure py-4 text-center text-[10px] tracking-[1em] text-muted-foreground">
+        <div aria-hidden className="w-full py-4 text-center text-[10px] tracking-[1em] text-muted-foreground">
           ◆ ◆ ◆
         </div>
       );
