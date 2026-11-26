@@ -1,4 +1,4 @@
-import { useParams, Link } from "react-router-dom";
+import { useParams, Link, useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -16,7 +16,7 @@ import {
   selectCategoryPagePagination,
   selectCategoryPageCategory,
 } from "@/store/slices/articlesSlice";
-import { URL_TO_DB_SLUG, URL_SLUG_LABELS } from "@/lib/categorySlugs";
+import { URL_TO_DB_SLUG, URL_SLUG_LABELS, categoryUrlPath } from "@/lib/categorySlugs";
 import MetaHead from "@/components/MetaHead";
 import {
   buildBreadcrumbJsonLd,
@@ -32,6 +32,11 @@ import { useReducedMotion } from "@/hooks/use-reduced-motion";
 export default function Category() {
   const { category: urlSlug } = useParams();
   const dispatch = useAppDispatch();
+  const navigate = useNavigate();
+  const categoryRedirect = useAppSelector((s) => s.articles.categoryRedirect);
+  useEffect(() => {
+    if (categoryRedirect) navigate(categoryUrlPath(categoryRedirect), { replace: true });
+  }, [categoryRedirect, navigate]);
   const labelFromUrl = urlSlug ? (URL_SLUG_LABELS[urlSlug] ?? urlSlug) : "";
   const dbSlug = urlSlug ? (URL_TO_DB_SLUG[urlSlug] ?? urlSlug) : "";
 

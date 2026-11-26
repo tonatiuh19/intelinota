@@ -28,6 +28,10 @@ export default defineConfig(({ mode }) => ({
     },
   },
   plugins: [react(), expressPlugin()],
+  test: {
+    // Agent worktrees contain full repo copies — never run their tests
+    exclude: ["**/node_modules/**", "**/dist/**", ".claude/**"],
+  },
   resolve: {
     dedupe: ["react", "react-dom"],
     alias: {

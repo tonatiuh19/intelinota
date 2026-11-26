@@ -48,6 +48,8 @@ export interface ArticlesState {
   } | null;
   categoryPageLoading: boolean;
   categoryPageError: string | null;
+  /** Set when the requested section slug was renamed */
+  categoryRedirect: string | null;
   /** New slug when the requested article was renamed (navigate + replace) */
   redirectSlug: string | null;
 }
@@ -110,6 +112,15 @@ export interface AdminAuthorsState {
   saving: boolean;
   saveError: string | null;
   deleteError: string | null;
+  /** Live slug availability for the author form */
+  slugCheck: {
+    slug: string;
+    checking: boolean;
+    available: boolean | null;
+    suggestion: string;
+  };
+  /** Author id whose panel access is being changed */
+  accessBusyId: number | null;
 }
 
 export interface AdminCommentsQuery {
@@ -137,14 +148,25 @@ export interface AdminCommentsState {
 }
 
 export interface AdminCategoriesState {
-  items: import("@shared/api").Category[];
+  items: import("@shared/api").AdminCategory[];
   loading: boolean;
   error: string | null;
   saving: boolean;
   saveError: string | null;
 }
 
+export interface AdminNewsletterQuery {
+  page: number;
+  status: "all" | "active" | "pending" | "unsubscribed";
+  q: string;
+}
+
 export interface AdminNewsletterState {
+  query: AdminNewsletterQuery;
+  stats: import("@shared/api").NewsletterStats | null;
+  statsLoading: boolean;
+  busyIds: number[];
+  exporting: boolean;
   items: import("@shared/api").NewsletterSubscriber[];
   pagination: {
     page: number;
@@ -215,10 +237,20 @@ export interface RevisionsState {
   error: string | null;
 }
 
+export interface AdminAuditFilters {
+  user_id: number | null;
+  type: import("@shared/api").AuditTypeFilter | null;
+  from: string | null;
+  to: string | null;
+}
+
 export interface AdminAuditState {
   items: import("@shared/api").AuditEntry[];
   pagination: { page: number; limit: number; total: number; totalPages: number } | null;
+  filters: AdminAuditFilters;
+  users: import("@shared/api").AuditUserOption[];
   loading: boolean;
+  loadingMore: boolean;
   error: string | null;
 }
 

@@ -19,6 +19,28 @@ export interface Subcategory {
   category_id: number;
   name: string;
   slug: string;
+  sort_order?: number;
+}
+
+/** Admin categories list item (GET /api/admin/categories). */
+export interface AdminSubcategory extends Subcategory {
+  sort_order: number;
+  article_count: number;
+}
+
+export interface AdminCategory extends Omit<Category, "subcategories"> {
+  updated_at: string;
+  published_count: number;
+  draft_count: number;
+  article_count: number;
+  subcategories: AdminSubcategory[];
+}
+
+export interface CategoryWritePayload {
+  name: string;
+  slug: string;
+  description: string | null;
+  is_active: boolean;
 }
 
 export interface SocialLinks {
@@ -258,7 +280,34 @@ export interface AdminAuthor extends Author {
   user_id: number | null;
   user_role: AdminRole | null;
   can_publish?: boolean;
+  /** Email of the linked panel account (users.email), if any */
+  user_email?: string | null;
+  /** Aggregated article stats (GET /api/admin/authors) */
+  stats?: AdminAuthorStats;
 }
+
+export interface AdminAuthorStats {
+  published: number;
+  drafts: number;
+  in_review: number;
+  scheduled: number;
+  total_views: number;
+  last_published_at: string | null;
+}
+
+/** POST /api/admin/authors/:id/access — invite/link a panel account */
+export interface AuthorAccessPayload {
+  email: string;
+  role: AdminRole;
+  can_publish: boolean;
+}
+export type AuthorAccessResponse = ApiSuccess<{
+  user_id: number;
+  created: boolean;
+  invite_sent: boolean;
+}>;
+/** GET /api/admin/authors/slug-available?slug=&exclude_id= */
+export type AuthorSlugAvailabilityResponse = ApiSuccess<{ available: boolean; suggestion: string }>;
 
 // Article with full fields including draft/archived (admin sees all statuses)
 export interface AdminArticle extends Article {
@@ -338,6 +387,8 @@ export interface UpsertAuthorPayload {
   user_role?: AdminRole;
   /** Trusted author: may publish/schedule own articles (admin-only toggle) */
   can_publish?: boolean;
+  /** Create only: invite/link a panel account in the same step */
+  access?: AuthorAccessPayload | null;
 }
 
 // ── Admin API response types ─────────────────────────────────
@@ -425,10 +476,17 @@ export interface NewsletterSubscriber {
   source: string | null;
   status: "pending" | "active" | "unsubscribed";
   subscribed_at: string;
+  confirmed_at?: string | null;
   unsubscribed_at: string | null;
 }
 
 export type AdminNewsletterResponse = PaginatedResponse<NewsletterSubscriber>;
+
+export interface NewsletterStats {
+  counts: { active: number; pending: number; unsubscribed: number; new_7d: number; total: number };
+  daily: Array<{ date: string; count: number }>;
+  sources: Array<{ source: string; count: number }>;
+}
 
 export interface MediaVariant {
   width: number;
@@ -471,8 +529,15 @@ export interface ArticleRevision {
 }
 export type ArticleRevisionsResponse = ApiSuccess<ArticleRevision[]>;
 
+export type AuditSource = "audit" | "mcp";
+/** Activity filter groups accepted by GET /api/admin/audit?type= */
+export type AuditTypeFilter = "articles" | "comments" | "review" | "authors" | "mcp" | "settings";
+
 export interface AuditEntry {
   id: number;
+  /** "mcp" rows come from mcp_audit_logs (tool calls made through an AI client) */
+  source?: AuditSource;
+  user_id?: number | null;
   action: string;
   entity_type: string;
   entity_id: number | null;
@@ -481,7 +546,23 @@ export interface AuditEntry {
   user_name: string | null;
   user_email: string | null;
 }
-export type AuditLogResponse = PaginatedResponse<AuditEntry>;
+export interface AuditLogQuery {
+  page?: number;
+  limit?: number;
+  user_id?: number | null;
+  type?: AuditTypeFilter | null;
+  /** YYYY-MM-DD inclusive */
+  from?: string | null;
+  to?: string | null;
+  /** Merge MCP tool calls (mcp_audit_logs) into the feed */
+  include_mcp?: boolean;
+}
+export interface AuditUserOption {
+  id: number;
+  name: string | null;
+  email: string;
+}
+export type AuditLogResponse = PaginatedResponse<AuditEntry> & { users?: AuditUserOption[] };
 /** Public GET /api/articles/:slug — `{ redirect }` when the slug was renamed */
 export type ArticleFullResponse = ApiSuccess<ArticleFullData | ArticleRedirectData>;
 export interface ArticleRedirectData {

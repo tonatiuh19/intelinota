@@ -500,7 +500,8 @@ CREATE TABLE `subcategories` (
   `category_id` int(10) UNSIGNED NOT NULL,
   `name` varchar(100) COLLATE utf8mb4_unicode_ci NOT NULL,
   `slug` varchar(100) COLLATE utf8mb4_unicode_ci NOT NULL,
-  `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP
+  `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `sort_order` smallint(5) UNSIGNED NOT NULL DEFAULT '0'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 --
@@ -964,3 +965,19 @@ COMMIT;
 /*!40101 SET CHARACTER_SET_CLIENT=@OLD_CHARACTER_SET_CLIENT */;
 /*!40101 SET CHARACTER_SET_RESULTS=@OLD_CHARACTER_SET_RESULTS */;
 /*!40101 SET COLLATION_CONNECTION=@OLD_COLLATION_CONNECTION */;
+
+-- Indexes added by 20261126_160000_* migrations
+ALTER TABLE `subcategories` ADD KEY `idx_subcategories_sort` (`category_id`, `sort_order`);
+ALTER TABLE `audit_log` ADD INDEX `idx_audit_user_created` (`user_id`, `created_at`);
+ALTER TABLE `mcp_audit_logs` ADD INDEX `idx_mcp_audit_confirm_created` (`confirm`, `created_at`);
+
+-- Migration: keep old section URLs working after a slug change
+-- Date: 2026-11-26 17:00:00
+
+CREATE TABLE `category_slug_redirects` (
+  `old_slug` varchar(120) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `category_id` int(10) UNSIGNED NOT NULL,
+  `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`old_slug`),
+  KEY `idx_category_redirects_category` (`category_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
