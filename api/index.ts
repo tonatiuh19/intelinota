@@ -896,8 +896,13 @@ const handleGetCategories: RequestHandler = async (_req, res) => {
 const handleGetAuthors: RequestHandler = async (_req, res) => {
   try {
     const [rows] = await getPool().query<RowDataPacket[]>(
-      `SELECT id, name, slug, bio, avatar_url, twitter_handle
-       FROM authors ORDER BY name ASC`,
+      `SELECT au.id, au.name, au.slug, au.bio, au.avatar_url, au.twitter_handle,
+              COUNT(a.id) AS article_count,
+              MAX(a.published_at) AS latest_published_at
+       FROM authors au
+       LEFT JOIN articles a ON a.author_id = au.id AND a.status = 'published'
+       GROUP BY au.id, au.name, au.slug, au.bio, au.avatar_url, au.twitter_handle
+       ORDER BY article_count DESC, au.name ASC`,
     );
     res.json({ success: true, data: rows });
   } catch (error) {

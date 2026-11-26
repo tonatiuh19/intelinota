@@ -38,6 +38,10 @@ export interface Author {
   avatar_url: string | null;
   twitter_handle: string | null;
   social_links?: SocialLinks | null;
+  /** Authors list only: published stories */
+  article_count?: number;
+  /** Authors list only: most recent publish date */
+  latest_published_at?: string | null;
 }
 
 export type ArticleStatus =
