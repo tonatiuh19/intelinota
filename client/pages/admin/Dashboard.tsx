@@ -6,7 +6,13 @@ import {
   selectDashboardStats,
   selectDashboardLoading,
   selectDashboardError,
+  fetchWriterOverview,
+  selectWriterOverview,
+  selectWriterLoading,
+  selectWriterError,
 } from "@/store/slices/adminDashboardSlice";
+import { STATUS_META, relativeTime, shortDateTime } from "./articleMeta";
+import { cn } from "@/lib/utils";
 import { selectAdminUser } from "@/store/slices/adminAuthSlice";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
@@ -23,6 +29,10 @@ import {
   BookOpen,
   Archive,
   Layers,
+  CalendarClock,
+  Clock,
+  Send,
+  Sparkles,
 } from "lucide-react";
 
 function StatCard({
@@ -67,12 +77,22 @@ export default function AdminDashboard() {
   const loading = useAppSelector(selectDashboardLoading);
   const error = useAppSelector(selectDashboardError);
   const user = useAppSelector(selectAdminUser);
-
-  useEffect(() => {
-    dispatch(fetchAdminDashboard());
-  }, [dispatch]);
+  const writer = useAppSelector(selectWriterOverview);
+  const writerLoading = useAppSelector(selectWriterLoading);
+  const writerError = useAppSelector(selectWriterError);
 
   const isAdmin = user?.role === "admin";
+
+  useEffect(() => {
+    dispatch(fetchWriterOverview());
+    if (isAdmin) dispatch(fetchAdminDashboard());
+  }, [dispatch, isAdmin]);
+
+  const hour = new Date().getHours();
+  const greeting =
+    hour < 12 ? "Buenos días" : hour < 19 ? "Buenas tardes" : "Buenas noches";
+  const firstName = user?.name?.split(" ")[0] ?? "";
+  const wLoading = writerLoading && !writer;
 
   const statCards = [
     {
@@ -118,36 +138,45 @@ export default function AdminDashboard() {
   ];
 
   return (
-    <div className="max-w-6xl mx-auto space-y-8">
-      {/* Header */}
-      <div className="flex items-start justify-between gap-4 flex-wrap">
-        <div>
-          <h1 className="text-2xl font-bold text-foreground">
-            Hola, {user?.name?.split(" ")[0] ?? "Admin"} 👋
+    <div className="max-w-6xl mx-auto space-y-6 sm:space-y-8">
+      {/* Greeting + CTA */}
+      <section className="rounded-2xl border border-border bg-card p-5 sm:p-7 flex flex-col sm:flex-row sm:items-center gap-5 sm:gap-8">
+        <div className="flex-1 min-w-0">
+          <p className="kicker">
+            {new Date().toLocaleDateString("es-MX", {
+              weekday: "long",
+              day: "numeric",
+              month: "long",
+            })}
+          </p>
+          <h1 className="font-display text-2xl sm:text-4xl font-semibold text-foreground mt-2 leading-tight">
+            {greeting}
+            {firstName ? `, ${firstName}` : ""}.
           </h1>
-          <p className="text-muted-foreground text-sm mt-1">
-            Aquí tienes un resumen de InteliNota
+          <p className="text-muted-foreground text-sm sm:text-base mt-2">
+            ¿Qué historia vamos a contar hoy?
           </p>
         </div>
         <Button
           asChild
-          className="bg-blue-600 hover:bg-blue-700 text-white shadow-lg shadow-blue-500/20"
+          size="lg"
+          className="h-12 sm:h-14 px-6 text-base bg-brand hover:bg-brand/90 text-brand-foreground shadow-lg shadow-brand/20 w-full sm:w-auto"
         >
           <Link to="/admin/articles/new">
-            <PenSquare className="w-4 h-4 mr-2" />
-            Nuevo artículo
+            <PenSquare className="w-5 h-5 mr-2" />
+            Escribir nuevo
           </Link>
         </Button>
-      </div>
+      </section>
 
-      {error && (
+      {writerError && (
         <Alert variant="destructive">
           <AlertDescription className="flex flex-wrap items-center justify-between gap-4">
-            <span>{error}</span>
+            <span>{writerError}</span>
             <Button
               variant="outline"
-              size="sm"
-              onClick={() => dispatch(fetchAdminDashboard())}
+              className="h-10"
+              onClick={() => dispatch(fetchWriterOverview())}
             >
               Reintentar
             </Button>
@@ -155,15 +184,222 @@ export default function AdminDashboard() {
         </Alert>
       )}
 
-      {/* Stats grid */}
-      <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-        {statCards.map((card) => (
-          <StatCard key={card.label} {...card} loading={loading} />
-        ))}
+      {/* Mis números */}
+      <section className="space-y-3">
+        <h2 className="kicker">Mis números</h2>
+        <div className="grid grid-cols-1 min-[400px]:grid-cols-3 gap-3">
+          {[
+            {
+              label: "Publicados",
+              value: writer?.publishedCount ?? 0,
+              icon: BookOpen,
+              tone: "text-emerald-600 dark:text-emerald-400 bg-emerald-500/10",
+              to: "/admin/articles?status=published&mine=1",
+            },
+            {
+              label: "Vistas totales",
+              value: writer?.totalViews ?? 0,
+              icon: Eye,
+              tone: "text-brand bg-brand/10",
+              to: "/admin/articles?status=published&mine=1",
+            },
+            {
+              label: "En revisión",
+              value: writer?.inReviewCount ?? 0,
+              icon: Send,
+              tone: "text-violet-600 dark:text-violet-400 bg-violet-500/10",
+              to: "/admin/articles?status=in_review&mine=1",
+            },
+          ].map(({ label, value, icon: Icon, tone, to }) => (
+            <Link
+              key={label}
+              to={to}
+              className="rounded-xl border border-border bg-card p-4 flex min-[400px]:flex-col items-center min-[400px]:items-start gap-3 hover:border-brand/40 transition-colors"
+            >
+              <div
+                className={cn(
+                  "h-10 w-10 rounded-lg flex items-center justify-center flex-shrink-0",
+                  tone,
+                )}
+              >
+                <Icon className="h-4 w-4" />
+              </div>
+              <div className="min-w-0">
+                {wLoading ? (
+                  <Skeleton className="h-7 w-16" />
+                ) : (
+                  <div className="font-display text-2xl sm:text-3xl font-semibold text-foreground tabular-nums">
+                    {value.toLocaleString("es-MX")}
+                    {writer && !writer.exact && "+"}
+                  </div>
+                )}
+                <div className="text-xs text-muted-foreground mt-0.5">
+                  {label}
+                </div>
+              </div>
+            </Link>
+          ))}
+        </div>
+      </section>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* Continuar escribiendo */}
+        <section className="rounded-xl border border-border bg-card overflow-hidden">
+          <div className="flex items-center justify-between px-4 sm:px-5 h-14 border-b border-border">
+            <h2 className="flex items-center gap-2 text-sm font-semibold text-foreground">
+              <Clock className="h-4 w-4 text-amber-500" />
+              Continuar escribiendo
+            </h2>
+            <Button
+              asChild
+              variant="ghost"
+              className="h-10 text-xs text-muted-foreground"
+            >
+              <Link to="/admin/articles?status=draft&mine=1">
+                Borradores <ArrowRight className="w-3 h-3 ml-1" />
+              </Link>
+            </Button>
+          </div>
+          {wLoading ? (
+            <div className="divide-y divide-border">
+              {Array.from({ length: 3 }).map((_, i) => (
+                <div key={i} className="px-5 py-4 space-y-2">
+                  <Skeleton className="h-4 w-4/5" />
+                  <Skeleton className="h-3 w-1/4" />
+                </div>
+              ))}
+            </div>
+          ) : writer?.recentDrafts.length ? (
+            <ul className="divide-y divide-border">
+              {writer.recentDrafts.map((a) => (
+                <li key={a.id}>
+                  <Link
+                    to={`/admin/articles/${a.id}/edit`}
+                    className="flex items-center gap-3 px-4 sm:px-5 py-3 min-h-14 hover:bg-accent/40 transition-colors group"
+                  >
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium text-foreground line-clamp-2 group-hover:text-brand transition-colors">
+                        {a.title || "Sin título"}
+                      </p>
+                      <p className="text-xs text-muted-foreground mt-0.5">
+                        Editado {relativeTime(a.updated_at)}
+                      </p>
+                    </div>
+                    <ArrowRight className="h-4 w-4 text-muted-foreground flex-shrink-0 transition-transform group-hover:translate-x-0.5" />
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <div className="px-5 py-10 text-center space-y-2">
+              <Sparkles className="h-6 w-6 text-brand mx-auto" />
+              <p className="text-sm text-muted-foreground">
+                No tienes borradores pendientes. ¡Empieza uno nuevo!
+              </p>
+            </div>
+          )}
+        </section>
+
+        {/* Programados */}
+        <section className="rounded-xl border border-border bg-card overflow-hidden">
+          <div className="flex items-center justify-between px-4 sm:px-5 h-14 border-b border-border">
+            <h2 className="flex items-center gap-2 text-sm font-semibold text-foreground">
+              <CalendarClock className="h-4 w-4 text-brand" />
+              Programados
+            </h2>
+            <Button
+              asChild
+              variant="ghost"
+              className="h-10 text-xs text-muted-foreground"
+            >
+              <Link to="/admin/articles?status=scheduled">
+                Ver todos <ArrowRight className="w-3 h-3 ml-1" />
+              </Link>
+            </Button>
+          </div>
+          {wLoading ? (
+            <div className="divide-y divide-border">
+              {Array.from({ length: 2 }).map((_, i) => (
+                <div key={i} className="px-5 py-4 space-y-2">
+                  <Skeleton className="h-4 w-3/4" />
+                  <Skeleton className="h-3 w-1/3" />
+                </div>
+              ))}
+            </div>
+          ) : writer?.scheduled.length ? (
+            <ul className="divide-y divide-border">
+              {writer.scheduled.map((a) => (
+                <li key={a.id}>
+                  <Link
+                    to={`/admin/articles/${a.id}/edit`}
+                    className="flex items-start gap-3 px-4 sm:px-5 py-3 min-h-14 hover:bg-accent/40 transition-colors group"
+                  >
+                    <div className="flex-shrink-0 w-14 text-center rounded-lg bg-brand/10 py-1.5">
+                      <div className="text-[10px] uppercase font-semibold text-brand leading-none">
+                        {a.published_at
+                          ? new Date(a.published_at).toLocaleDateString("es-MX", { month: "short" })
+                          : "—"}
+                      </div>
+                      <div className="font-display text-lg font-semibold text-foreground leading-tight">
+                        {a.published_at ? new Date(a.published_at).getDate() : "?"}
+                      </div>
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium text-foreground line-clamp-2 group-hover:text-brand transition-colors">
+                        {a.title}
+                      </p>
+                      <p className="text-xs text-muted-foreground mt-0.5">
+                        <span className={STATUS_META.scheduled.text}>
+                          {shortDateTime(a.published_at)}
+                        </span>
+                        {a.published_at && ` · ${relativeTime(a.published_at)}`}
+                        {isAdmin && a.author_name && ` · ${a.author_name}`}
+                      </p>
+                    </div>
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <div className="px-5 py-10 text-center text-sm text-muted-foreground">
+              Nada programado por ahora.
+            </div>
+          )}
+        </section>
       </div>
 
+      {isAdmin && (
+        <div className="pt-4 border-t border-border space-y-6">
+          <div>
+            <p className="kicker">Toda la redacción</p>
+            <h2 className="font-display text-xl sm:text-2xl font-semibold text-foreground mt-1">
+              Resumen del sitio
+            </h2>
+          </div>
+
+          {error && (
+            <Alert variant="destructive">
+              <AlertDescription className="flex flex-wrap items-center justify-between gap-4">
+                <span>{error}</span>
+                <Button
+                  variant="outline"
+                  className="h-10"
+                  onClick={() => dispatch(fetchAdminDashboard())}
+                >
+                  Reintentar
+                </Button>
+              </AlertDescription>
+            </Alert>
+          )}
+
+          <div className="grid grid-cols-1 min-[400px]:grid-cols-2 lg:grid-cols-3 gap-4">
+            {statCards.map((card) => (
+              <StatCard key={card.label} {...card} loading={loading} />
+            ))}
+          </div>
+
       {/* Content area */}
-      <div className="grid lg:grid-cols-5 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
         {/* Top articles */}
         <div className="lg:col-span-3 rounded-xl border border-border bg-card/60 overflow-hidden">
           <div className="flex items-center justify-between px-5 py-4 border-b border-border">
@@ -177,7 +413,7 @@ export default function AdminDashboard() {
               asChild
               variant="ghost"
               size="sm"
-              className="text-xs text-muted-foreground h-7"
+              className="text-xs text-muted-foreground h-10"
             >
               <Link to="/admin/articles">
                 Ver todos <ArrowRight className="w-3 h-3 ml-1" />
@@ -203,7 +439,7 @@ export default function AdminDashboard() {
                     {i + 1}
                   </span>
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm text-foreground truncate group-hover:text-blue-400 transition-colors">
+                    <p className="text-sm text-foreground truncate group-hover:text-brand transition-colors">
                       {article.title}
                     </p>
                     <p className="text-xs text-muted-foreground">
@@ -314,7 +550,7 @@ export default function AdminDashboard() {
             <Button
               asChild
               variant="outline"
-              className="w-full justify-start h-9 text-sm"
+              className="w-full justify-start h-10 text-sm"
             >
               <Link to="/admin/articles/new">
                 <PenSquare className="w-4 h-4 mr-2 text-blue-400" />
@@ -325,7 +561,7 @@ export default function AdminDashboard() {
               <Button
                 asChild
                 variant="outline"
-                className="w-full justify-start h-9 text-sm"
+                className="w-full justify-start h-10 text-sm"
               >
                 <Link to="/admin/authors">
                   <Users className="w-4 h-4 mr-2 text-pink-400" />
@@ -336,7 +572,7 @@ export default function AdminDashboard() {
             <Button
               asChild
               variant="outline"
-              className="w-full justify-start h-9 text-sm"
+              className="w-full justify-start h-10 text-sm"
             >
               <Link to="/admin/articles?status=draft">
                 <Archive className="w-4 h-4 mr-2 text-amber-400" />
@@ -346,6 +582,8 @@ export default function AdminDashboard() {
           </div>
         </div>
       </div>
+        </div>
+      )}
     </div>
   );
 }

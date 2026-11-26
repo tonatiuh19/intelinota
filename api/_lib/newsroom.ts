@@ -1,4 +1,5 @@
 import type { Pool, RowDataPacket, ResultSetHeader } from "mysql2/promise";
+import type { Queryable } from "./workflow.js";
 
 /** Lower-case, accent-free, URL-safe slug. */
 export function slugify(input: string): string {
@@ -13,7 +14,7 @@ export function slugify(input: string): string {
 
 /** Replaces an article's tags with the given names (creating tags as needed). */
 export async function setArticleTags(
-  pool: Pool,
+  pool: Queryable,
   articleId: number,
   names: string[],
 ): Promise<void> {
@@ -47,7 +48,7 @@ export async function setArticleTags(
 }
 
 export async function getArticleTags(
-  pool: Pool,
+  pool: Queryable,
   articleId: number,
 ): Promise<Array<{ id: number; name: string; slug: string }>> {
   const [rows] = await pool.query<RowDataPacket[]>(
@@ -81,7 +82,8 @@ async function saveRevisionUnsafe(
   const [[articleRows], [blockRows], tags] = await Promise.all([
     pool.query<RowDataPacket[]>(
       `SELECT id, slug, title, excerpt, content, category_id, subcategory_id, author_id,
-              image_url, read_time_minutes, featured, trending, status, published_at
+              image_url, read_time_minutes, featured, trending, status, published_at,
+              meta_title, meta_description
        FROM articles WHERE id = ? LIMIT 1`,
       [articleId],
     ),
@@ -112,10 +114,10 @@ async function saveRevisionUnsafe(
       }),
     ],
   );
-  // Keep the 50 most recent revisions per article
+  // Keep the 50 most recent snapshots per article (pending edits are kept)
   await pool.query(
-    `DELETE FROM article_revisions WHERE article_id = ? AND id NOT IN (
-       SELECT id FROM (SELECT id FROM article_revisions WHERE article_id = ?
+    `DELETE FROM article_revisions WHERE article_id = ? AND kind = 'snapshot' AND id NOT IN (
+       SELECT id FROM (SELECT id FROM article_revisions WHERE article_id = ? AND kind = 'snapshot'
                        ORDER BY created_at DESC, id DESC LIMIT 50) keep)`,
     [articleId, articleId],
   );

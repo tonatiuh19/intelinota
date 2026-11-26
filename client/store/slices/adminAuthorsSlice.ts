@@ -73,6 +73,28 @@ export const updateAdminAuthor = createAsyncThunk(
   },
 );
 
+/** Trusted-author toggle (admin only). Optimistic; reverted on failure. */
+export const setAuthorCanPublish = createAsyncThunk(
+  "adminAuthors/setCanPublish",
+  async (
+    { id, can_publish }: { id: number; can_publish: boolean },
+    { getState, rejectWithValue },
+  ) => {
+    const token = (getState() as RootState).adminAuth.token;
+    if (!token) return rejectWithValue("Not authenticated");
+    try {
+      await axios.put(`/api/admin/authors/${id}`, { can_publish }, {
+        headers: authHeader(token),
+      });
+      return { id, can_publish };
+    } catch (err: any) {
+      return rejectWithValue(
+        err.response?.data?.message ?? "No se pudo actualizar el permiso",
+      );
+    }
+  },
+);
+
 export const deleteAdminAuthor = createAsyncThunk(
   "adminAuthors/delete",
   async (id: number, { getState, rejectWithValue }) => {
@@ -137,6 +159,18 @@ const adminAuthorsSlice = createSlice({
       })
       .addCase(updateAdminAuthor.rejected, (s, a) => {
         s.saving = false;
+        s.saveError = a.payload as string;
+      });
+
+    builder
+      .addCase(setAuthorCanPublish.pending, (s, a) => {
+        const item = s.items.find((i) => i.id === a.meta.arg.id);
+        if (item) item.can_publish = a.meta.arg.can_publish;
+        s.saveError = null;
+      })
+      .addCase(setAuthorCanPublish.rejected, (s, a) => {
+        const item = s.items.find((i) => i.id === a.meta.arg.id);
+        if (item) item.can_publish = !a.meta.arg.can_publish;
         s.saveError = a.payload as string;
       });
 

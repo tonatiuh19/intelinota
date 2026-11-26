@@ -7,6 +7,7 @@ import {
   createAdminAuthor,
   updateAdminAuthor,
   deleteAdminAuthor,
+  setAuthorCanPublish,
   clearSaveError,
   selectAdminAuthors,
   selectAdminAuthorsLoading,
@@ -27,6 +28,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
+import { Switch } from "@/components/ui/switch";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import {
@@ -464,6 +466,30 @@ export default function AdminAuthors() {
                     ));
                 })()}
               </div>
+
+              {/* Trusted author: may publish/schedule own articles */}
+              {author.user_id && author.user_role === "author" && (
+                <label
+                  htmlFor={`can-publish-${author.id}`}
+                  className="flex min-h-10 items-center justify-between gap-3 rounded-lg border border-border/60 px-3 py-2 cursor-pointer"
+                >
+                  <span className="min-w-0">
+                    <span className="block text-xs font-medium text-foreground">
+                      Puede publicar
+                    </span>
+                    <span className="block text-[11px] text-muted-foreground">
+                      Publica y programa sus notas sin revisión
+                    </span>
+                  </span>
+                  <Switch
+                    id={`can-publish-${author.id}`}
+                    checked={Boolean(author.can_publish)}
+                    onCheckedChange={(checked) =>
+                      dispatch(setAuthorCanPublish({ id: author.id, can_publish: checked }))
+                    }
+                  />
+                </label>
+              )}
             </div>
           ))}
         </div>

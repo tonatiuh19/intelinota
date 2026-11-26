@@ -14,15 +14,24 @@ export interface UploadMediaArgs {
   filename: string;
   mime_type: string;
   alt_text?: string;
+  /** Optional upload progress callback (0–100). Not sent to the API. */
+  onProgress?: (percent: number) => void;
 }
 
 export const uploadMedia = createAsyncThunk(
   "adminMedia/upload",
-  async (args: UploadMediaArgs, { rejectWithValue }) => {
+  async ({ onProgress, ...body }: UploadMediaArgs, { rejectWithValue }) => {
     try {
       const { data } = await axios.post<AdminUploadResponse>(
         "/api/admin/upload",
-        args,
+        body,
+        {
+          onUploadProgress: onProgress
+            ? (e) => {
+                if (e.total) onProgress(Math.round((e.loaded / e.total) * 100));
+              }
+            : undefined,
+        },
       );
       if (!data.success || !data.data?.url) {
         return rejectWithValue("Upload failed");

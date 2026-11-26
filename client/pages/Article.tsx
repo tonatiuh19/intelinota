@@ -1,4 +1,4 @@
-import { useParams, Link } from "react-router-dom";
+import { useParams, Link, useNavigate } from "react-router-dom";
 import {
   Share2,
   Bookmark,
@@ -29,6 +29,7 @@ import {
   selectCurrentBlocks,
   selectCurrentRelated,
   selectCurrentTags,
+  selectRedirectSlug,
 } from "@/store/slices/articlesSlice";
 import {
   fetchAuthor,
@@ -61,6 +62,8 @@ import { useToast } from "@/hooks/use-toast";
 export default function Article() {
   const { slug } = useParams<{ slug: string }>();
   const dispatch = useAppDispatch();
+  const navigate = useNavigate();
+  const redirectSlug = useAppSelector(selectRedirectSlug);
 
   const article = useAppSelector(selectCurrentArticle);
   const loading = useAppSelector(selectDetailLoading);
@@ -115,6 +118,13 @@ export default function Article() {
       dispatch(clearComments());
     };
   }, [dispatch, slug]);
+
+  // Renamed article: the old URL resolves to the new slug
+  useEffect(() => {
+    if (redirectSlug && redirectSlug !== slug) {
+      navigate(`/articulo/${redirectSlug}`, { replace: true });
+    }
+  }, [navigate, redirectSlug, slug]);
 
   useEffect(() => {
     if (slug) dispatch(fetchComments(slug));
@@ -245,8 +255,8 @@ export default function Article() {
     <article className="pb-24 lg:pb-28">
       <ReadingProgress />
       <MetaHead
-        title={article.title}
-        description={article.excerpt ?? undefined}
+        title={article.meta_title || article.title}
+        description={article.meta_description || article.excerpt || undefined}
         keywords={articleTags.join(", ")}
         ogType="article"
         ogImage={article.image_url ?? undefined}

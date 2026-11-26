@@ -405,3 +405,35 @@
     transparent
   );
 }
+
+/* ── Story editor (admin) ─────────────────────────────────────── */
+.story-editor p.is-empty::before,
+.story-editor h2.is-empty::before,
+.story-editor h3.is-empty::before {
+  content: attr(data-placeholder);
+  float: left;
+  height: 0;
+  pointer-events: none;
+  color: hsl(var(--muted-foreground) / 0.55);
+}
+.story-editor > * + * {
+  margin-top: 1.1em;
+}
+.story-editor figure.ProseMirror-selectednode,
+.story-editor iframe.ProseMirror-selectednode,
+.story-editor hr.ProseMirror-selectednode {
+  outline: 3px solid hsl(var(--brand));
+  outline-offset: 3px;
+  border-radius: 0.75rem;
+}
+.story-editor iframe {
+  pointer-events: none; /* select the embed instead of interacting with it */
+}
+.story-editor a {
+  cursor: text;
+}
+@media (max-width: 767px) {
+  .story-editor {
+    padding-bottom: 5rem; /* room above the mobile formatting bar */
+  }
+}

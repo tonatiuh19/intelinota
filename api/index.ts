@@ -25,7 +25,17 @@ import {
 } from "./_lib/security.js";
 import { processAndStoreImage, isBlobConfigured } from "./_lib/media.js";
 import { buildSitemap, buildNewsSitemap, buildRss } from "./_lib/feeds.js";
-import { setArticleTags, getArticleTags, saveRevision, audit } from "./_lib/newsroom.js";
+import { setArticleTags, getArticleTags, saveRevision, audit, slugify } from "./_lib/newsroom.js";
+import {
+  notifyUsers,
+  getAdminUserIds,
+  getAuthorUserIds,
+  parseSnapshot,
+  snapshotPlainText,
+  suggestSlug,
+  type NotificationInput,
+  type Queryable,
+} from "./_lib/workflow.js";
 
 // JWT Secret — required in production (Vercel)
 function resolveJwtSecret(): string {
@@ -73,6 +83,9 @@ function getPool(): mysql.Pool {
       port: parseInt(process.env.DB_PORT || "3306"),
       waitForConnections: true,
       connectionLimit: Number(process.env.DB_POOL_LIMIT || 3),
+      // DB stores UTC: parse/serialize DATETIME/TIMESTAMP as UTC on every
+      // machine (local dev in UTC-6 was shifting times by 6 hours).
+      timezone: "Z",
       enableKeepAlive: true,
       queueLimit: 0,
       ...(process.env.DB_SSL === "true"
@@ -285,6 +298,8 @@ function auditFrom(req: express.Request) {
     })(),
   };
 }
+
+const DEFAULT_NEWSROOM_TZ = "America/Mexico_City";
 
 const ARTICLE_STATUSES = new Set(["draft", "in_review", "published", "archived", "scheduled"]);
 
@@ -705,7 +720,9 @@ const handleArticleView: RequestHandler = async (req, res) => {
   }
   try {
     await getPool().query(
-      "UPDATE articles SET view_count = view_count + 1 WHERE slug = ? AND status = 'published'",
+      // updated_at = updated_at: views must not bump the edit timestamp
+      // (optimistic-concurrency checks compare it)
+      "UPDATE articles SET view_count = view_count + 1, updated_at = updated_at WHERE slug = ? AND status = 'published'",
       [slug],
     );
   } catch (error) {
@@ -759,7 +776,8 @@ const handleGetArticle: RequestHandler = async (req, res) => {
       a.subcategory_id, sc.name AS subcategory_name, sc.slug AS subcategory_slug,
       a.author_id, au.name AS author_name, au.slug AS author_slug,
       a.image_url, a.read_time_minutes, a.featured, a.trending,
-      a.status, a.published_at, a.view_count
+      a.status, a.published_at, a.view_count, a.updated_at,
+      a.meta_title, a.meta_description
     `;
     const JOINS = `
       FROM articles a
@@ -774,6 +792,20 @@ const handleGetArticle: RequestHandler = async (req, res) => {
     );
 
     if (!articleRows.length) {
+      // Renamed article? Old slugs of published articles resolve to the new one
+      try {
+        const [redirectRows] = await getPool().query<RowDataPacket[]>(
+          `SELECT a.slug FROM article_slug_redirects r
+           JOIN articles a ON a.id = r.article_id
+           WHERE r.old_slug = ? AND a.status = 'published' LIMIT 1`,
+          [slug],
+        );
+        if (redirectRows.length && redirectRows[0].slug !== slug) {
+          return res.json({ success: true, data: { redirect: String(redirectRows[0].slug) } });
+        }
+      } catch (redirectErr) {
+        console.error("slug redirect lookup failed:", redirectErr);
+      }
       return res
         .status(404)
         .json({ success: false, message: "Article not found" });
@@ -1278,6 +1310,8 @@ declare global {
         email: string;
         role: "admin" | "author";
         authorId: number | null;
+        /** Admins always; authors when users.can_publish = 1 */
+        canPublish: boolean;
       };
     }
   }
@@ -1297,10 +1331,20 @@ const requireAdminAuth: RequestHandler = async (req, res, next) => {
       authorId: number | null;
     };
 
-    const [rows] = await getPool().query<RowDataPacket[]>(
-      "SELECT id, email, role, author_id FROM users WHERE id = ? AND role IN ('admin','author') LIMIT 1",
-      [payload.userId],
-    );
+    let rows: RowDataPacket[];
+    try {
+      [rows] = await getPool().query<RowDataPacket[]>(
+        "SELECT id, email, role, author_id, can_publish FROM users WHERE id = ? AND role IN ('admin','author') LIMIT 1",
+        [payload.userId],
+      );
+    } catch (qErr: any) {
+      // can_publish migration not applied yet
+      if (qErr?.code !== "ER_BAD_FIELD_ERROR") throw qErr;
+      [rows] = await getPool().query<RowDataPacket[]>(
+        "SELECT id, email, role, author_id, 0 AS can_publish FROM users WHERE id = ? AND role IN ('admin','author') LIMIT 1",
+        [payload.userId],
+      );
+    }
     if (!(rows as RowDataPacket[]).length) {
       return res
         .status(401)
@@ -1313,6 +1357,7 @@ const requireAdminAuth: RequestHandler = async (req, res, next) => {
       email: user.email as string,
       role: user.role as "admin" | "author",
       authorId: (user.author_id as number | null) ?? null,
+      canPublish: user.role === "admin" || Number(user.can_publish) === 1,
     };
     next();
   } catch {
@@ -1507,10 +1552,19 @@ const handleAdminVerifyCode: RequestHandler = async (req, res) => {
  * Builds admin user payload including linked author profile fields.
  */
 async function buildAdminUserResponse(userId: number) {
-  const [rows] = await getPool().query<RowDataPacket[]>(
-    "SELECT id, email, name, role, author_id, avatar_url FROM users WHERE id = ? LIMIT 1",
-    [userId],
-  );
+  let rows: RowDataPacket[];
+  try {
+    [rows] = await getPool().query<RowDataPacket[]>(
+      "SELECT id, email, name, role, author_id, avatar_url, can_publish FROM users WHERE id = ? LIMIT 1",
+      [userId],
+    );
+  } catch (qErr: any) {
+    if (qErr?.code !== "ER_BAD_FIELD_ERROR") throw qErr;
+    [rows] = await getPool().query<RowDataPacket[]>(
+      "SELECT id, email, name, role, author_id, avatar_url, 0 AS can_publish FROM users WHERE id = ? LIMIT 1",
+      [userId],
+    );
+  }
   if (!(rows as RowDataPacket[]).length) return null;
 
   const u = (rows as RowDataPacket[])[0];
@@ -1521,6 +1575,8 @@ async function buildAdminUserResponse(userId: number) {
     role: u.role,
     author_id: u.author_id ?? null,
     avatar_url: u.avatar_url ?? null,
+    can_publish: u.role === "admin" || Number(u.can_publish) === 1,
+    newsroom_timezone: (await getSystemSetting("newsroom_timezone")) || DEFAULT_NEWSROOM_TZ,
     bio: null as string | null,
     twitter_handle: null as string | null,
     social_links: null as object | null,
@@ -1890,7 +1946,8 @@ const handleAdminGetArticle: RequestHandler = async (req, res) => {
         a.subcategory_id, sc.name AS subcategory_name, sc.slug AS subcategory_slug,
         a.author_id, au.name AS author_name, au.slug AS author_slug,
         a.image_url, a.read_time_minutes, a.featured, a.trending,
-        a.status, a.published_at, a.view_count, a.created_at, a.updated_at
+        a.status, a.published_at, a.view_count, a.created_at, a.updated_at,
+        a.meta_title, a.meta_description
        FROM articles a
        JOIN categories c ON c.id = a.category_id
        LEFT JOIN subcategories sc ON sc.id = a.subcategory_id
@@ -1919,7 +1976,32 @@ const handleAdminGetArticle: RequestHandler = async (req, res) => {
     );
     const tags = await getArticleTags(getPool(), article.id as number);
 
-    res.json({ success: true, data: { ...article, blocks, tags: tags.map((t) => t.name) } });
+    // The caller's own pending (unreviewed) edit of this live article, if any
+    let pendingRevision: { id: number; created_at: string | null } | null = null;
+    try {
+      const [pendingRows] = await getPool().query<RowDataPacket[]>(
+        `SELECT id, created_at FROM article_revisions
+         WHERE article_id = ? AND user_id = ? AND kind = 'pending' AND review_status = 'pending'
+         ORDER BY id DESC LIMIT 1`,
+        [article.id, req.adminUser!.userId],
+      );
+      if (pendingRows[0]) {
+        pendingRevision = { id: Number(pendingRows[0].id), created_at: toIso(pendingRows[0].created_at) };
+      }
+    } catch (qErr: any) {
+      if (qErr?.code !== "ER_BAD_FIELD_ERROR") throw qErr;
+    }
+
+    res.json({
+      success: true,
+      data: {
+        ...article,
+        updated_at: toIso(article.updated_at),
+        blocks,
+        tags: tags.map((t) => t.name),
+        pending_revision: pendingRevision,
+      },
+    });
   } catch (error) {
     res
       .status(500)
@@ -1985,6 +2067,236 @@ const handleAdminFeaturedCount: RequestHandler = async (req, res) => {
   }
 };
 
+// =====================================================
+// NEWSROOM WORKFLOW HELPERS
+// =====================================================
+
+type BlockInput = { id?: number; position: number; type: string; data: unknown };
+
+interface ArticleWriteBody {
+  title?: string;
+  slug?: string;
+  excerpt?: string | null;
+  content?: string | null;
+  category_id?: number;
+  subcategory_id?: number | null;
+  author_id?: number;
+  image_url?: string | null;
+  read_time_minutes?: number;
+  featured?: boolean;
+  trending?: boolean;
+  status?: string;
+  published_at?: string | null;
+  meta_title?: string | null;
+  meta_description?: string | null;
+  blocks?: BlockInput[];
+  tags?: string[];
+  /** Optimistic concurrency: ISO updated_at the client loaded */
+  expected_updated_at?: string;
+}
+
+const adminArticleLink = (id: number) => `/admin/articles/${id}/edit`;
+
+/** Trimmed, tag-free SEO override or null when empty. */
+function cleanMeta(value: unknown, max: number): string | null {
+  if (value == null) return null;
+  const text = sanitizePlainText(String(value), max).slice(0, max);
+  return text || null;
+}
+
+function toEpochSeconds(value: unknown): number | null {
+  if (value == null || value === "") return null;
+  const d = value instanceof Date ? value : new Date(String(value));
+  const t = d.getTime();
+  return Number.isFinite(t) ? Math.floor(t / 1000) : null;
+}
+
+function toIso(value: unknown): string | null {
+  if (value == null) return null;
+  const d = value instanceof Date ? value : new Date(String(value));
+  return Number.isFinite(d.getTime()) ? d.toISOString() : null;
+}
+
+function sanitizeBlocks(articleId: number, blocks: BlockInput[]) {
+  return blocks.map((b) => [
+    articleId,
+    b.position,
+    b.type,
+    JSON.stringify(sanitizeBlockData(b.type, b.data)),
+  ]);
+}
+
+async function replaceBlocks(db: Queryable, articleId: number, blocks: BlockInput[]) {
+  await db.query("DELETE FROM article_blocks WHERE article_id = ?", [articleId]);
+  if (blocks.length) {
+    await db.query(
+      "INSERT INTO article_blocks (article_id, position, type, data) VALUES ?",
+      [sanitizeBlocks(articleId, blocks)],
+    );
+  }
+}
+
+/** Keeps an old public URL working after a published article is renamed. */
+async function recordSlugChange(
+  db: Queryable,
+  articleId: number,
+  oldSlug: string,
+  newSlug: string,
+): Promise<void> {
+  if (!oldSlug || !newSlug || oldSlug === newSlug) return;
+  await db.query(
+    `INSERT INTO article_slug_redirects (old_slug, article_id) VALUES (?, ?)
+     ON DUPLICATE KEY UPDATE article_id = VALUES(article_id), created_at = CURRENT_TIMESTAMP`,
+    [oldSlug, articleId],
+  );
+  // The new slug is live again: a redirect from it would loop
+  await db.query("DELETE FROM article_slug_redirects WHERE old_slug = ?", [newSlug]);
+}
+
+function notifyOpts(exceptUserId: number | null) {
+  return {
+    exceptUserId,
+    baseUrl: publicBase(),
+    sendEmail: resendClient
+      ? (to: string, subject: string, html: string) => sendEmail({ to, subject, html })
+      : undefined,
+  };
+}
+
+async function notifyAdmins(n: NotificationInput, exceptUserId: number | null) {
+  try {
+    const ids = await getAdminUserIds(getPool());
+    await notifyUsers(getPool(), ids, n, notifyOpts(exceptUserId));
+  } catch (error) {
+    console.error("notifyAdmins failed:", error);
+  }
+}
+
+async function notifyArticleAuthor(
+  authorId: number,
+  n: NotificationInput,
+  exceptUserId: number | null,
+) {
+  try {
+    const ids = await getAuthorUserIds(getPool(), authorId);
+    await notifyUsers(getPool(), ids, n, notifyOpts(exceptUserId));
+  } catch (error) {
+    console.error("notifyArticleAuthor failed:", error);
+  }
+}
+
+async function addReviewNote(entry: {
+  articleId: number;
+  revisionId?: number | null;
+  userId: number | null;
+  action: "returned" | "approved" | "published" | "comment";
+  note?: string | null;
+}): Promise<void> {
+  try {
+    await getPool().query(
+      `INSERT INTO article_review_notes (article_id, revision_id, user_id, action, note)
+       VALUES (?, ?, ?, ?, ?)`,
+      [entry.articleId, entry.revisionId ?? null, entry.userId, entry.action, entry.note ?? null],
+    );
+  } catch (error) {
+    console.error("review note insert failed:", error);
+  }
+}
+
+/**
+ * Stores a proposed full snapshot for review. One pending edit per article
+ * per user: a newer proposal replaces the previous one.
+ */
+async function storePendingRevision(
+  articleId: number,
+  userId: number,
+  snapshot: { article: Record<string, unknown>; blocks: unknown[]; tags?: string[] },
+): Promise<number> {
+  const conn = await getPool().getConnection();
+  try {
+    await conn.beginTransaction();
+    await conn.query(
+      `DELETE FROM article_revisions
+       WHERE article_id = ? AND user_id = ? AND kind = 'pending' AND review_status = 'pending'`,
+      [articleId, userId],
+    );
+    const [result] = await conn.query<ResultSetHeader>(
+      `INSERT INTO article_revisions (article_id, user_id, title, status, snapshot, kind, review_status)
+       VALUES (?, ?, ?, ?, ?, 'pending', 'pending')`,
+      [
+        articleId,
+        userId,
+        String(snapshot.article.title ?? "").slice(0, 255),
+        String(snapshot.article.status ?? "published"),
+        JSON.stringify(snapshot),
+      ],
+    );
+    await conn.commit();
+    return result.insertId;
+  } catch (error) {
+    await conn.rollback();
+    throw error;
+  } finally {
+    conn.release();
+  }
+}
+
+async function loadArticleSnapshotParts(articleId: number) {
+  const [[articleRows], [blockRows], tags] = await Promise.all([
+    getPool().query<RowDataPacket[]>(
+      `SELECT id, slug, title, excerpt, content, category_id, subcategory_id, author_id,
+              image_url, read_time_minutes, featured, trending, status, published_at,
+              meta_title, meta_description, updated_at
+       FROM articles WHERE id = ? LIMIT 1`,
+      [articleId],
+    ),
+    getPool().query<RowDataPacket[]>(
+      "SELECT position, type, data FROM article_blocks WHERE article_id = ? ORDER BY position",
+      [articleId],
+    ),
+    getArticleTags(getPool(), articleId),
+  ]);
+  return {
+    article: articleRows[0] as RowDataPacket | undefined,
+    blocks: blockRows.map((b) => ({
+      position: Number(b.position),
+      type: String(b.type),
+      data: typeof b.data === "string" ? safeJsonParse(b.data) : b.data,
+    })),
+    tags: tags.map((t) => t.name),
+  };
+}
+
+/** Submits a proposed edit of a live article for review → 202. */
+async function respondWithPendingEdit(
+  req: express.Request,
+  res: express.Response,
+  articleId: number,
+  snapshot: { article: Record<string, unknown>; blocks: unknown[]; tags?: string[] },
+) {
+  const revisionId = await storePendingRevision(articleId, req.adminUser!.userId, snapshot);
+  await audit(getPool(), {
+    ...auditFrom(req),
+    action: "article.pending_edit",
+    entityType: "article",
+    entityId: articleId,
+    details: { revisionId, title: snapshot.article.title },
+  });
+  await notifyAdmins(
+    {
+      type: "revision.submitted",
+      title: `Edición pendiente: ${String(snapshot.article.title ?? "").slice(0, 180)}`,
+      body: "Un autor propuso cambios a un artículo publicado. Revísalos antes de que salgan en vivo.",
+      link: "/admin/reviews",
+    },
+    req.adminUser!.userId,
+  );
+  return res.status(202).json({
+    success: true,
+    data: { id: articleId, pending: true, revision_id: revisionId },
+  });
+}
+
 /**
  * POST /api/admin/articles
  */
@@ -1992,22 +2304,11 @@ const handleAdminCreateArticle: RequestHandler = async (req, res) => {
   try {
     if (!ensureLinkedAuthor(req, res)) return;
 
-    const body = req.body as {
+    const body = req.body as ArticleWriteBody & {
       title: string;
       slug: string;
-      excerpt?: string;
-      content?: string;
       category_id: number;
-      subcategory_id?: number;
       author_id: number;
-      image_url?: string;
-      read_time_minutes?: number;
-      featured?: boolean;
-      trending?: boolean;
-      status?: string;
-      published_at?: string;
-      blocks?: Array<{ position: number; type: string; data: object }>;
-      tags?: string[];
     };
 
     if (!body.title || !body.slug || !body.category_id || !body.author_id) {
@@ -2019,13 +2320,15 @@ const handleAdminCreateArticle: RequestHandler = async (req, res) => {
 
     // Author guard: non-admin can only create for their own author_id
     const isAdmin = req.adminUser!.role === "admin";
+    const canPublish = req.adminUser!.canPublish;
     const effectiveAuthorId = isAdmin
       ? body.author_id
       : req.adminUser!.authorId!;
 
-    // Non-admin authors cannot publish, schedule, or curate homepage flags
+    // Authors without publish rights may only draft or submit for review;
+    // homepage curation is admin-only either way
     const requested = ARTICLE_STATUSES.has(String(body.status)) ? String(body.status) : "draft";
-    const effectiveStatus = isAdmin
+    const effectiveStatus = canPublish
       ? requested
       : requested === "in_review"
         ? "in_review"
@@ -2045,49 +2348,50 @@ const handleAdminCreateArticle: RequestHandler = async (req, res) => {
       }
     }
 
-    const [result] = await getPool().query<ResultSetHeader>(
-      `INSERT INTO articles
-         (slug, title, excerpt, content, category_id, subcategory_id, author_id,
-          image_url, read_time_minutes, featured, trending, status, published_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        body.slug,
-        body.title,
-        body.excerpt ?? null,
-        body.content != null ? sanitizeRichHtml(body.content) : null,
-        body.category_id,
-        body.subcategory_id ?? null,
-        effectiveAuthorId,
-        body.image_url ?? null,
-        body.read_time_minutes ?? 5,
-        effectiveTrending ? 1 : effectiveFeatured ? 1 : 0,
-        effectiveTrending ? 1 : 0,
-        effectiveStatus,
-        // Scheduled: published_at is the target time; Published with no date: NOW()
-        effectiveStatus === "published" && !body.published_at
-          ? new Date().toISOString()
-          : (body.published_at ?? null),
-      ],
-    );
-
-    const articleId = result.insertId;
-
-    if (body.blocks?.length) {
-      const blockValues = body.blocks.map((b) => [
-        articleId,
-        b.position,
-        b.type,
-        JSON.stringify(sanitizeBlockData(b.type, b.data)),
-      ]);
-      await getPool().query(
-        "INSERT INTO article_blocks (article_id, position, type, data) VALUES ?",
-        [blockValues],
+    const conn = await getPool().getConnection();
+    let articleId: number;
+    try {
+      await conn.beginTransaction();
+      const [result] = await conn.query<ResultSetHeader>(
+        `INSERT INTO articles
+           (slug, title, excerpt, content, category_id, subcategory_id, author_id,
+            image_url, read_time_minutes, featured, trending, status, published_at,
+            meta_title, meta_description)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          body.slug,
+          body.title,
+          body.excerpt ?? null,
+          body.content != null ? sanitizeRichHtml(body.content) : null,
+          body.category_id,
+          body.subcategory_id ?? null,
+          effectiveAuthorId,
+          body.image_url ?? null,
+          body.read_time_minutes ?? 5,
+          effectiveTrending ? 1 : effectiveFeatured ? 1 : 0,
+          effectiveTrending ? 1 : 0,
+          effectiveStatus,
+          // Scheduled: published_at is the target time; Published with no date: NOW()
+          effectiveStatus === "published" && !body.published_at
+            ? new Date()
+            : canPublish
+              ? (body.published_at ?? null)
+              : null,
+          cleanMeta(body.meta_title, 160),
+          cleanMeta(body.meta_description, 320),
+        ],
       );
+      articleId = result.insertId;
+      if (body.blocks?.length) await replaceBlocks(conn, articleId, body.blocks);
+      if (Array.isArray(body.tags)) await setArticleTags(conn, articleId, body.tags);
+      await conn.commit();
+    } catch (txErr) {
+      await conn.rollback();
+      throw txErr;
+    } finally {
+      conn.release();
     }
 
-    if (Array.isArray(body.tags)) {
-      await setArticleTags(getPool(), articleId, body.tags);
-    }
     await saveRevision(getPool(), articleId, req.adminUser!.userId);
     await audit(getPool(), {
       ...auditFrom(req),
@@ -2096,22 +2400,46 @@ const handleAdminCreateArticle: RequestHandler = async (req, res) => {
       entityId: articleId,
       details: { title: body.title, status: effectiveStatus },
     });
+    if (effectiveStatus === "in_review") {
+      await notifyAdmins(
+        {
+          type: "review.submitted",
+          title: `En revisión: ${body.title.slice(0, 200)}`,
+          body: "Un artículo nuevo espera aprobación.",
+          link: "/admin/reviews",
+        },
+        req.adminUser!.userId,
+      );
+    }
 
-    res.status(201).json({ success: true, data: { id: articleId } });
+    const [after] = await getPool().query<RowDataPacket[]>(
+      "SELECT updated_at FROM articles WHERE id = ? LIMIT 1",
+      [articleId],
+    );
+    res.status(201).json({
+      success: true,
+      data: { id: articleId, status: effectiveStatus, updated_at: toIso(after[0]?.updated_at) },
+    });
   } catch (error: any) {
     if (error?.code === "ER_DUP_ENTRY") {
       return res
         .status(409)
-        .json({ success: false, message: "Slug already exists" });
+        .json({ success: false, code: "SLUG_TAKEN", message: "Slug already exists" });
     }
     res
       .status(500)
-      .json({ success: false, message: "Failed to create article" });
+      .json({ success: false, message: "Failed to create article", ...devError(error) });
   }
 };
 
 /**
  * PUT /api/admin/articles/:id
+ *
+ * - expected_updated_at (optional): 409 { code: 'CONFLICT', data: { updated_at } }
+ *   when the article changed since the client loaded it.
+ * - A user without publish rights editing a *published* article does not
+ *   touch the live article: the full proposed snapshot is stored as a
+ *   pending revision → 202 { pending: true, revision_id }.
  */
 const handleAdminUpdateArticle: RequestHandler = async (req, res) => {
   try {
@@ -2121,51 +2449,79 @@ const handleAdminUpdateArticle: RequestHandler = async (req, res) => {
     if (isNaN(id))
       return res.status(400).json({ success: false, message: "Invalid id" });
 
-    // Ownership check
-    const [existing] = await getPool().query<RowDataPacket[]>(
-      "SELECT author_id, featured, status FROM articles WHERE id = ? LIMIT 1",
+    const [existingRows] = await getPool().query<RowDataPacket[]>(
+      `SELECT id, slug, title, excerpt, content, category_id, subcategory_id, author_id,
+              image_url, read_time_minutes, featured, trending, status, published_at,
+              meta_title, meta_description, updated_at
+       FROM articles WHERE id = ? LIMIT 1`,
       [id],
     );
-    if (!(existing as RowDataPacket[]).length) {
+    const existing = existingRows[0];
+    if (!existing) {
       return res
         .status(404)
         .json({ success: false, message: "Article not found" });
     }
     const isAdmin = req.adminUser!.role === "admin";
-    if (
-      !isAdmin &&
-      req.adminUser!.authorId !== (existing as RowDataPacket[])[0].author_id
-    ) {
+    const canPublish = req.adminUser!.canPublish;
+    if (!isAdmin && req.adminUser!.authorId !== existing.author_id) {
       return res.status(403).json({ success: false, message: "Forbidden" });
     }
 
-    const body = req.body as {
-      title?: string;
-      slug?: string;
-      excerpt?: string;
-      content?: string;
-      category_id?: number;
-      subcategory_id?: number;
-      author_id?: number;
-      image_url?: string;
-      read_time_minutes?: number;
-      featured?: boolean;
-      trending?: boolean;
-      status?: string;
-      published_at?: string;
-      blocks?: Array<{
-        id?: number;
-        position: number;
-        type: string;
-        data: object;
-      }>;
-      tags?: string[];
-    };
+    const body = req.body as ArticleWriteBody;
+
+    if (body.expected_updated_at) {
+      const expected = toEpochSeconds(body.expected_updated_at);
+      const current = toEpochSeconds(existing.updated_at);
+      if (expected !== null && current !== null && expected !== current) {
+        return res.status(409).json({
+          success: false,
+          code: "CONFLICT",
+          message: "El artículo fue modificado por otra persona",
+          data: { updated_at: toIso(existing.updated_at) },
+        });
+      }
+    }
+
+    // Live article edited without publish rights → proposal for review
+    if (!canPublish && existing.status === "published") {
+      const current = await loadArticleSnapshotParts(id);
+      const base = { ...(current.article ?? existing) } as Record<string, unknown>;
+      delete base.updated_at;
+      const proposed: Record<string, unknown> = {
+        ...base,
+        ...(body.title !== undefined ? { title: body.title } : {}),
+        ...(body.slug !== undefined ? { slug: body.slug } : {}),
+        ...(body.excerpt !== undefined ? { excerpt: body.excerpt ?? null } : {}),
+        ...(body.content !== undefined
+          ? { content: body.content != null ? sanitizeRichHtml(body.content) : null }
+          : {}),
+        ...(body.category_id !== undefined ? { category_id: body.category_id } : {}),
+        ...(body.subcategory_id !== undefined ? { subcategory_id: body.subcategory_id ?? null } : {}),
+        ...(body.image_url !== undefined ? { image_url: body.image_url ?? null } : {}),
+        ...(body.read_time_minutes !== undefined ? { read_time_minutes: body.read_time_minutes } : {}),
+        ...(body.meta_title !== undefined ? { meta_title: cleanMeta(body.meta_title, 160) } : {}),
+        ...(body.meta_description !== undefined
+          ? { meta_description: cleanMeta(body.meta_description, 320) }
+          : {}),
+      };
+      if (!proposed.title || !proposed.slug) {
+        return res.status(400).json({ success: false, message: "title and slug are required" });
+      }
+      const blocks = body.blocks
+        ? body.blocks.map((b) => ({
+            position: b.position,
+            type: b.type,
+            data: sanitizeBlockData(b.type, b.data),
+          }))
+        : current.blocks;
+      const tags = Array.isArray(body.tags) ? body.tags.map(String) : current.tags;
+      return respondWithPendingEdit(req, res, id, { article: proposed, blocks, tags });
+    }
 
     // Auto-displace oldest featured when the limit (5) would be exceeded
-    if (isAdmin && body.featured) {
-      const wasAlreadyFeatured =
-        (existing as RowDataPacket[])[0].featured === 1;
+    if (isAdmin && (body.featured || body.trending)) {
+      const wasAlreadyFeatured = Number(existing.featured) === 1;
       if (!wasAlreadyFeatured) {
         const [cntRows] = await getPool().query<RowDataPacket[]>(
           "SELECT COUNT(*) AS cnt FROM articles WHERE featured = 1",
@@ -2179,19 +2535,40 @@ const handleAdminUpdateArticle: RequestHandler = async (req, res) => {
       }
     }
 
-    // Build dynamic SET clause
-    const sets: string[] = [];
-    const vals: (string | number | null | boolean)[] = [];
+    // Status: publishers (admins, trusted authors on their own articles) may
+    // set any status. Others move between draft/in_review only; a live
+    // article never reaches this point for them.
+    const requestedStatus =
+      body.status === undefined || !ARTICLE_STATUSES.has(String(body.status))
+        ? undefined
+        : String(body.status);
+    const nextStatus: string | undefined = canPublish
+      ? requestedStatus
+      : requestedStatus === "in_review" || requestedStatus === "draft"
+        ? requestedStatus
+        : undefined;
+
+    let publishedAt: unknown = canPublish ? body.published_at : undefined;
+    const finalStatus = nextStatus ?? String(existing.status);
+    if (canPublish && finalStatus === "published") {
+      const resolved = publishedAt === undefined ? existing.published_at : publishedAt;
+      if (!resolved) publishedAt = new Date();
+    }
 
     const fields: Record<string, unknown> = {
       title: body.title,
       slug: body.slug,
-      excerpt: body.excerpt ?? null,
-      content: body.content != null ? sanitizeRichHtml(body.content) : null,
+      excerpt: body.excerpt !== undefined ? (body.excerpt ?? null) : undefined,
+      content:
+        body.content !== undefined
+          ? body.content != null
+            ? sanitizeRichHtml(body.content)
+            : null
+          : undefined,
       category_id: body.category_id,
-      subcategory_id: body.subcategory_id ?? null,
+      subcategory_id: body.subcategory_id !== undefined ? (body.subcategory_id ?? null) : undefined,
       author_id: isAdmin ? body.author_id : undefined,
-      image_url: body.image_url ?? null,
+      image_url: body.image_url !== undefined ? (body.image_url ?? null) : undefined,
       read_time_minutes: body.read_time_minutes,
       featured: isAdmin
         ? body.trending
@@ -2209,78 +2586,563 @@ const handleAdminUpdateArticle: RequestHandler = async (req, res) => {
             : 0
           : undefined
         : undefined,
-      // Non-admin authors may move between draft/in_review only. Any other
-      // value leaves the current status untouched, so an author fixing a typo
-      // in a live article does not unpublish it.
-      status:
-        body.status === undefined || !ARTICLE_STATUSES.has(String(body.status))
-          ? undefined
-          : isAdmin
-            ? body.status
-            : body.status === "in_review" || body.status === "draft"
-              ? (existing as RowDataPacket[])[0].status === "published" &&
-                body.status === "draft"
-                ? undefined
-                : body.status
-              : undefined,
-      published_at: isAdmin ? (body.published_at ?? null) : undefined,
+      status: nextStatus,
+      published_at: publishedAt === undefined ? undefined : (publishedAt ?? null),
+      meta_title: body.meta_title !== undefined ? cleanMeta(body.meta_title, 160) : undefined,
+      meta_description:
+        body.meta_description !== undefined ? cleanMeta(body.meta_description, 320) : undefined,
     };
 
+    const sets: string[] = [];
+    const vals: unknown[] = [];
     for (const [key, val] of Object.entries(fields)) {
       if (val !== undefined) {
         sets.push(`${key} = ?`);
-        vals.push(val as string | number | null);
+        vals.push(val);
       }
     }
 
-    if (sets.length) {
-      await getPool().query(
-        `UPDATE articles SET ${sets.join(", ")} WHERE id = ?`,
-        [...vals, id],
-      );
-    }
-
-    // Replace blocks if provided
-    if (body.blocks !== undefined) {
-      await getPool().query("DELETE FROM article_blocks WHERE article_id = ?", [
-        id,
-      ]);
-      if (body.blocks.length) {
-        const blockValues = body.blocks.map((b) => [
-          id,
-          b.position,
-          b.type,
-          JSON.stringify(sanitizeBlockData(b.type, b.data)),
-        ]);
-        await getPool().query(
-          "INSERT INTO article_blocks (article_id, position, type, data) VALUES ?",
-          [blockValues],
-        );
+    const conn = await getPool().getConnection();
+    try {
+      await conn.beginTransaction();
+      if (sets.length) {
+        await conn.query(`UPDATE articles SET ${sets.join(", ")} WHERE id = ?`, [...vals, id]);
       }
+      if (body.blocks !== undefined) await replaceBlocks(conn, id, body.blocks);
+      if (Array.isArray(body.tags)) await setArticleTags(conn, id, body.tags);
+      if (body.slug && existing.status === "published") {
+        await recordSlugChange(conn, id, String(existing.slug), body.slug);
+      }
+      await conn.commit();
+    } catch (txErr) {
+      await conn.rollback();
+      throw txErr;
+    } finally {
+      conn.release();
     }
 
-    if (Array.isArray(body.tags)) {
-      await setArticleTags(getPool(), id, body.tags);
-    }
     await saveRevision(getPool(), id, req.adminUser!.userId);
     await audit(getPool(), {
       ...auditFrom(req),
-      action: fields.status ? `article.status.${String(fields.status)}` : "article.update",
+      action: nextStatus ? `article.status.${nextStatus}` : "article.update",
       entityType: "article",
       entityId: id,
-      details: { title: body.title },
+      details: { title: body.title ?? existing.title },
     });
 
-    res.json({ success: true, data: { id } });
+    if (nextStatus === "in_review" && existing.status !== "in_review") {
+      await notifyAdmins(
+        {
+          type: "review.submitted",
+          title: `En revisión: ${String(body.title ?? existing.title).slice(0, 200)}`,
+          body: "Un artículo espera aprobación.",
+          link: "/admin/reviews",
+        },
+        req.adminUser!.userId,
+      );
+    }
+
+    const [after] = await getPool().query<RowDataPacket[]>(
+      "SELECT status, updated_at FROM articles WHERE id = ? LIMIT 1",
+      [id],
+    );
+    res.json({
+      success: true,
+      data: { id, status: after[0]?.status, updated_at: toIso(after[0]?.updated_at) },
+    });
   } catch (error: any) {
     if (error?.code === "ER_DUP_ENTRY") {
       return res
         .status(409)
-        .json({ success: false, message: "Slug already exists" });
+        .json({ success: false, code: "SLUG_TAKEN", message: "Slug already exists" });
     }
     res
       .status(500)
-      .json({ success: false, message: "Failed to update article" });
+      .json({ success: false, message: "Failed to update article", ...devError(error) });
+  }
+};
+
+/**
+ * GET /api/admin/articles/slug-available?slug=&exclude_id=
+ */
+const handleAdminSlugAvailable: RequestHandler = async (req, res) => {
+  try {
+    const raw = typeof req.query.slug === "string" ? req.query.slug : "";
+    const slug = slugify(raw);
+    const excludeId = parseInt(String(req.query.exclude_id ?? ""));
+    if (!slug) {
+      return res.json({ success: true, data: { available: false, suggestion: "" } });
+    }
+    const like = `${escapeLike(slug)}-%`;
+    const [articleRows] = await getPool().query<RowDataPacket[]>(
+      `SELECT slug FROM articles WHERE (slug = ? OR slug LIKE ?) AND id != ?`,
+      [slug, like, Number.isFinite(excludeId) ? excludeId : 0],
+    );
+    let redirectRows: RowDataPacket[] = [];
+    try {
+      [redirectRows] = await getPool().query<RowDataPacket[]>(
+        `SELECT old_slug AS slug FROM article_slug_redirects
+         WHERE (old_slug = ? OR old_slug LIKE ?) AND article_id != ?`,
+        [slug, like, Number.isFinite(excludeId) ? excludeId : 0],
+      );
+    } catch (qErr: any) {
+      if (qErr?.code !== "ER_NO_SUCH_TABLE") throw qErr;
+    }
+    const taken = new Set([...articleRows, ...redirectRows].map((r) => String(r.slug)));
+    const suggestion = suggestSlug(slug, taken);
+    res.json({
+      success: true,
+      data: { available: suggestion === slug && slug === raw, suggestion },
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: "Failed to check slug", ...devError(error) });
+  }
+};
+
+// =====================================================
+// REVIEW QUEUE (admin only)
+// =====================================================
+
+/** GET /api/admin/reviews — articles in review + pending edits of live articles */
+const handleAdminGetReviews: RequestHandler = async (_req, res) => {
+  try {
+    const [[articles], [revisions]] = await Promise.all([
+      getPool().query<RowDataPacket[]>(
+        `SELECT a.id, a.slug, a.title, a.excerpt, a.status, a.image_url, a.updated_at,
+                a.author_id, au.name AS author_name, c.name AS category_name,
+                (SELECT MAX(l.created_at) FROM audit_log l
+                  WHERE l.entity_type = 'article' AND l.entity_id = a.id
+                    AND l.action IN ('article.status.in_review','article.create')) AS submitted_at
+         FROM articles a
+         JOIN authors au ON au.id = a.author_id
+         JOIN categories c ON c.id = a.category_id
+         WHERE a.status = 'in_review'
+         ORDER BY a.updated_at ASC
+         LIMIT 100`,
+      ),
+      getPool().query<RowDataPacket[]>(
+        `SELECT r.id, r.article_id, r.title AS proposed_title, r.snapshot, r.created_at,
+                r.user_id, u.name AS user_name, u.email AS user_email,
+                a.slug, a.title, a.excerpt, a.content, a.status, a.author_id,
+                au.name AS author_name
+         FROM article_revisions r
+         JOIN articles a ON a.id = r.article_id
+         JOIN authors au ON au.id = a.author_id
+         LEFT JOIN users u ON u.id = r.user_id
+         WHERE r.kind = 'pending' AND r.review_status = 'pending'
+         ORDER BY r.created_at ASC
+         LIMIT 100`,
+      ),
+    ]);
+
+    const pendingEdits = await Promise.all(
+      revisions.map(async (r) => {
+        const proposed = parseSnapshot(r.snapshot);
+        const live = await loadArticleSnapshotParts(Number(r.article_id));
+        const currentSnap = {
+          article: (live.article ?? {}) as Record<string, unknown>,
+          blocks: live.blocks,
+        };
+        return {
+          id: Number(r.id),
+          article_id: Number(r.article_id),
+          slug: String(r.slug),
+          status: r.status,
+          author_id: Number(r.author_id),
+          author_name: r.author_name,
+          user_id: r.user_id != null ? Number(r.user_id) : null,
+          user_name: r.user_name ?? null,
+          user_email: r.user_email ?? null,
+          submitted_at: toIso(r.created_at),
+          current: {
+            title: String(r.title ?? ""),
+            excerpt: (r.excerpt as string | null) ?? null,
+            slug: String(r.slug),
+            text: snapshotPlainText(currentSnap),
+          },
+          proposed: {
+            title: String(proposed.article.title ?? ""),
+            excerpt: (proposed.article.excerpt as string | null) ?? null,
+            slug: String(proposed.article.slug ?? r.slug),
+            text: snapshotPlainText(proposed),
+          },
+        };
+      }),
+    );
+
+    res.json({
+      success: true,
+      data: {
+        in_review: articles.map((a) => ({
+          id: Number(a.id),
+          slug: a.slug,
+          title: a.title,
+          excerpt: a.excerpt ?? null,
+          status: a.status,
+          image_url: a.image_url ?? null,
+          author_id: Number(a.author_id),
+          author_name: a.author_name,
+          category_name: a.category_name,
+          submitted_at: toIso(a.submitted_at ?? a.updated_at),
+          updated_at: toIso(a.updated_at),
+        })),
+        pending_edits: pendingEdits,
+        total: articles.length + pendingEdits.length,
+      },
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: "Failed to load review queue", ...devError(error) });
+  }
+};
+
+/**
+ * POST /api/admin/articles/:id/approve { published_at?, note? }
+ * in_review/draft → published (now) or scheduled (future published_at).
+ */
+const handleAdminApproveArticle: RequestHandler = async (req, res) => {
+  try {
+    const id = parseInt(String(req.params.id));
+    if (!Number.isFinite(id)) return res.status(400).json({ success: false, message: "Invalid id" });
+    const body = (req.body ?? {}) as { published_at?: string | null; note?: string };
+    const [rows] = await getPool().query<RowDataPacket[]>(
+      "SELECT id, title, slug, status, author_id FROM articles WHERE id = ? LIMIT 1",
+      [id],
+    );
+    const article = rows[0];
+    if (!article) return res.status(404).json({ success: false, message: "Article not found" });
+    if (!["in_review", "draft", "scheduled"].includes(String(article.status))) {
+      return res.status(409).json({ success: false, message: `Cannot approve an article that is ${article.status}` });
+    }
+    const when = body.published_at ? new Date(body.published_at) : null;
+    if (when && !Number.isFinite(when.getTime())) {
+      return res.status(400).json({ success: false, message: "Invalid published_at" });
+    }
+    const scheduled = when != null && when.getTime() > Date.now() + 60_000;
+    const status = scheduled ? "scheduled" : "published";
+    await getPool().query("UPDATE articles SET status = ?, published_at = ? WHERE id = ?", [
+      status,
+      when ?? new Date(),
+      id,
+    ]);
+    await saveRevision(getPool(), id, req.adminUser!.userId);
+    const note = body.note ? sanitizePlainText(body.note, 5000) : null;
+    await addReviewNote({
+      articleId: id,
+      userId: req.adminUser!.userId,
+      action: scheduled ? "approved" : "published",
+      note,
+    });
+    await audit(getPool(), {
+      ...auditFrom(req),
+      action: scheduled ? "article.review.approved" : "article.review.published",
+      entityType: "article",
+      entityId: id,
+      details: { title: article.title, published_at: (when ?? new Date()).toISOString() },
+    });
+    await notifyArticleAuthor(
+      Number(article.author_id),
+      {
+        type: scheduled ? "review.approved" : "review.published",
+        title: scheduled
+          ? `Aprobado y programado: ${String(article.title).slice(0, 180)}`
+          : `Publicado: ${String(article.title).slice(0, 190)}`,
+        body: note,
+        link: scheduled ? adminArticleLink(id) : `/articulo/${article.slug}`,
+      },
+      req.adminUser!.userId,
+    );
+    const [after] = await getPool().query<RowDataPacket[]>(
+      "SELECT status, published_at, updated_at FROM articles WHERE id = ? LIMIT 1",
+      [id],
+    );
+    res.json({
+      success: true,
+      data: {
+        id,
+        status: after[0]?.status,
+        published_at: toIso(after[0]?.published_at),
+        updated_at: toIso(after[0]?.updated_at),
+      },
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: "Failed to approve article", ...devError(error) });
+  }
+};
+
+/** POST /api/admin/articles/:id/return { note } — in_review → draft with feedback */
+const handleAdminReturnArticle: RequestHandler = async (req, res) => {
+  try {
+    const id = parseInt(String(req.params.id));
+    if (!Number.isFinite(id)) return res.status(400).json({ success: false, message: "Invalid id" });
+    const note = sanitizePlainText((req.body ?? {}).note, 5000);
+    if (note.length < 3) {
+      return res.status(400).json({ success: false, message: "A note is required" });
+    }
+    const [rows] = await getPool().query<RowDataPacket[]>(
+      "SELECT id, title, status, author_id FROM articles WHERE id = ? LIMIT 1",
+      [id],
+    );
+    const article = rows[0];
+    if (!article) return res.status(404).json({ success: false, message: "Article not found" });
+    if (article.status !== "in_review") {
+      return res.status(409).json({ success: false, message: "Article is not in review" });
+    }
+    await getPool().query("UPDATE articles SET status = 'draft' WHERE id = ?", [id]);
+    await addReviewNote({ articleId: id, userId: req.adminUser!.userId, action: "returned", note });
+    await audit(getPool(), {
+      ...auditFrom(req),
+      action: "article.review.returned",
+      entityType: "article",
+      entityId: id,
+      details: { title: article.title },
+    });
+    await notifyArticleAuthor(
+      Number(article.author_id),
+      {
+        type: "review.returned",
+        title: `Devuelto con comentarios: ${String(article.title).slice(0, 170)}`,
+        body: note,
+        link: adminArticleLink(id),
+      },
+      req.adminUser!.userId,
+    );
+    res.json({ success: true, data: { id, status: "draft" } });
+  } catch (error) {
+    res.status(500).json({ success: false, message: "Failed to return article", ...devError(error) });
+  }
+};
+
+async function loadPendingRevision(revId: number) {
+  const [rows] = await getPool().query<RowDataPacket[]>(
+    `SELECT r.id, r.article_id, r.user_id, r.snapshot, a.slug, a.title, a.status, a.author_id
+     FROM article_revisions r JOIN articles a ON a.id = r.article_id
+     WHERE r.id = ? AND r.kind = 'pending' AND r.review_status = 'pending' LIMIT 1`,
+    [revId],
+  );
+  return rows[0];
+}
+
+/** POST /api/admin/revisions/:revId/approve — applies a pending edit to the live article */
+const handleAdminApproveRevision: RequestHandler = async (req, res) => {
+  try {
+    const revId = parseInt(String(req.params.revId));
+    if (!Number.isFinite(revId)) return res.status(400).json({ success: false, message: "Invalid id" });
+    const rev = await loadPendingRevision(revId);
+    if (!rev) return res.status(404).json({ success: false, message: "Pending revision not found" });
+    const articleId = Number(rev.article_id);
+    const snap = parseSnapshot(rev.snapshot);
+    const a = snap.article;
+    const newSlug = String(a.slug ?? rev.slug);
+
+    const conn = await getPool().getConnection();
+    try {
+      await conn.beginTransaction();
+      await conn.query(
+        `UPDATE articles SET title = ?, slug = ?, excerpt = ?, content = ?, category_id = ?,
+           subcategory_id = ?, image_url = ?, read_time_minutes = ?,
+           meta_title = ?, meta_description = ?
+         WHERE id = ?`,
+        [
+          String(a.title ?? rev.title),
+          newSlug,
+          (a.excerpt as string | null) ?? null,
+          a.content != null ? sanitizeRichHtml(String(a.content)) : null,
+          a.category_id,
+          (a.subcategory_id as number | null) ?? null,
+          (a.image_url as string | null) ?? null,
+          Number(a.read_time_minutes ?? 5),
+          cleanMeta(a.meta_title, 160),
+          cleanMeta(a.meta_description, 320),
+          articleId,
+        ],
+      );
+      await replaceBlocks(conn, articleId, snap.blocks);
+      if (Array.isArray(snap.tags)) await setArticleTags(conn, articleId, snap.tags);
+      if (rev.status === "published") {
+        await recordSlugChange(conn, articleId, String(rev.slug), newSlug);
+      }
+      await conn.query(
+        `UPDATE article_revisions SET review_status = 'approved', reviewed_by = ?, reviewed_at = NOW()
+         WHERE id = ?`,
+        [req.adminUser!.userId, revId],
+      );
+      await conn.commit();
+    } catch (txErr) {
+      await conn.rollback();
+      throw txErr;
+    } finally {
+      conn.release();
+    }
+
+    await saveRevision(getPool(), articleId, req.adminUser!.userId);
+    const note = sanitizePlainText((req.body ?? {}).note, 5000) || null;
+    await addReviewNote({ articleId, revisionId: revId, userId: req.adminUser!.userId, action: "approved", note });
+    await audit(getPool(), {
+      ...auditFrom(req),
+      action: "article.revision.approved",
+      entityType: "article",
+      entityId: articleId,
+      details: { revisionId: revId, title: a.title },
+    });
+    if (rev.user_id) {
+      try {
+        await notifyUsers(
+          getPool(),
+          [Number(rev.user_id)],
+          {
+            type: "revision.approved",
+            title: `Cambios aprobados: ${String(a.title ?? rev.title).slice(0, 180)}`,
+            body: note,
+            link: `/articulo/${newSlug}`,
+          },
+          notifyOpts(req.adminUser!.userId),
+        );
+      } catch (error) {
+        console.error("notify revision approved failed:", error);
+      }
+    }
+    const [after] = await getPool().query<RowDataPacket[]>(
+      "SELECT updated_at FROM articles WHERE id = ? LIMIT 1",
+      [articleId],
+    );
+    res.json({
+      success: true,
+      data: { id: articleId, revision_id: revId, slug: newSlug, updated_at: toIso(after[0]?.updated_at) },
+    });
+  } catch (error: any) {
+    if (error?.code === "ER_DUP_ENTRY") {
+      return res.status(409).json({ success: false, code: "SLUG_TAKEN", message: "Slug already exists" });
+    }
+    res.status(500).json({ success: false, message: "Failed to approve revision", ...devError(error) });
+  }
+};
+
+/** POST /api/admin/revisions/:revId/reject { note } */
+const handleAdminRejectRevision: RequestHandler = async (req, res) => {
+  try {
+    const revId = parseInt(String(req.params.revId));
+    if (!Number.isFinite(revId)) return res.status(400).json({ success: false, message: "Invalid id" });
+    const note = sanitizePlainText((req.body ?? {}).note, 5000);
+    if (note.length < 3) {
+      return res.status(400).json({ success: false, message: "A note is required" });
+    }
+    const rev = await loadPendingRevision(revId);
+    if (!rev) return res.status(404).json({ success: false, message: "Pending revision not found" });
+    const articleId = Number(rev.article_id);
+    await getPool().query(
+      `UPDATE article_revisions SET review_status = 'rejected', reviewed_by = ?, reviewed_at = NOW()
+       WHERE id = ?`,
+      [req.adminUser!.userId, revId],
+    );
+    await addReviewNote({ articleId, revisionId: revId, userId: req.adminUser!.userId, action: "returned", note });
+    await audit(getPool(), {
+      ...auditFrom(req),
+      action: "article.revision.rejected",
+      entityType: "article",
+      entityId: articleId,
+      details: { revisionId: revId },
+    });
+    if (rev.user_id) {
+      try {
+        await notifyUsers(
+          getPool(),
+          [Number(rev.user_id)],
+          {
+            type: "revision.rejected",
+            title: `Cambios no aprobados: ${String(rev.title).slice(0, 180)}`,
+            body: note,
+            link: adminArticleLink(articleId),
+          },
+          notifyOpts(req.adminUser!.userId),
+        );
+      } catch (error) {
+        console.error("notify revision rejected failed:", error);
+      }
+    }
+    res.json({ success: true, data: { id: articleId, revision_id: revId } });
+  } catch (error) {
+    res.status(500).json({ success: false, message: "Failed to reject revision", ...devError(error) });
+  }
+};
+
+/** GET /api/admin/articles/:id/notes — review feedback history (owner or admin) */
+const handleAdminGetArticleNotes: RequestHandler = async (req, res) => {
+  try {
+    const id = await loadOwnedArticle(req, res);
+    if (id == null) return;
+    const [rows] = await getPool().query<RowDataPacket[]>(
+      `SELECT n.id, n.article_id, n.revision_id, n.user_id, n.action, n.note, n.created_at,
+              u.name AS user_name, u.email AS user_email
+       FROM article_review_notes n
+       LEFT JOIN users u ON u.id = n.user_id
+       WHERE n.article_id = ?
+       ORDER BY n.created_at DESC, n.id DESC
+       LIMIT 100`,
+      [id],
+    );
+    res.json({ success: true, data: rows });
+  } catch (error) {
+    res.status(500).json({ success: false, message: "Failed to load notes", ...devError(error) });
+  }
+};
+
+// =====================================================
+// NOTIFICATIONS
+// =====================================================
+
+/** GET /api/admin/notifications?unread=1 → latest 30 + unread_count */
+const handleAdminGetNotifications: RequestHandler = async (req, res) => {
+  try {
+    const userId = req.adminUser!.userId;
+    const unreadOnly = req.query.unread === "1" || req.query.unread === "true";
+    const [[items], [countRows]] = await Promise.all([
+      getPool().query<RowDataPacket[]>(
+        `SELECT id, type, title, body, link, read_at, created_at
+         FROM notifications
+         WHERE user_id = ? ${unreadOnly ? "AND read_at IS NULL" : ""}
+         ORDER BY created_at DESC, id DESC
+         LIMIT 30`,
+        [userId],
+      ),
+      getPool().query<RowDataPacket[]>(
+        "SELECT COUNT(*) AS cnt FROM notifications WHERE user_id = ? AND read_at IS NULL",
+        [userId],
+      ),
+    ]);
+    res.json({
+      success: true,
+      data: { items, unread_count: Number(countRows[0]?.cnt ?? 0) },
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: "Failed to load notifications", ...devError(error) });
+  }
+};
+
+/** POST /api/admin/notifications/:id/read */
+const handleAdminReadNotification: RequestHandler = async (req, res) => {
+  try {
+    const id = parseInt(String(req.params.id));
+    if (!Number.isFinite(id)) return res.status(400).json({ success: false, message: "Invalid id" });
+    await getPool().query(
+      "UPDATE notifications SET read_at = NOW() WHERE id = ? AND user_id = ? AND read_at IS NULL",
+      [id, req.adminUser!.userId],
+    );
+    res.json({ success: true, data: { id } });
+  } catch (error) {
+    res.status(500).json({ success: false, message: "Failed to update notification", ...devError(error) });
+  }
+};
+
+/** POST /api/admin/notifications/read-all */
+const handleAdminReadAllNotifications: RequestHandler = async (req, res) => {
+  try {
+    const [result] = await getPool().query<ResultSetHeader>(
+      "UPDATE notifications SET read_at = NOW() WHERE user_id = ? AND read_at IS NULL",
+      [req.adminUser!.userId],
+    );
+    res.json({ success: true, data: { updated: result.affectedRows } });
+  } catch (error) {
+    res.status(500).json({ success: false, message: "Failed to update notifications", ...devError(error) });
   }
 };
 
@@ -2340,7 +3202,7 @@ const handleAdminGetAuthors: RequestHandler = async (_req, res) => {
       [rows] = await getPool().query<RowDataPacket[]>(
         `SELECT
           au.id, au.name, au.slug, au.bio, au.avatar_url, au.email, au.twitter_handle, au.social_links,
-          u.id AS user_id, u.role AS user_role
+          u.id AS user_id, u.role AS user_role, u.can_publish AS can_publish
          FROM authors au
          LEFT JOIN users u ON u.author_id = au.id
          ORDER BY au.name ASC`,
@@ -2351,7 +3213,7 @@ const handleAdminGetAuthors: RequestHandler = async (_req, res) => {
         [rows] = await getPool().query<RowDataPacket[]>(
           `SELECT
             au.id, au.name, au.slug, au.bio, au.avatar_url, au.email, au.twitter_handle, NULL AS social_links,
-            u.id AS user_id, u.role AS user_role
+            u.id AS user_id, u.role AS user_role, 0 AS can_publish
            FROM authors au
            LEFT JOIN users u ON u.author_id = au.id
            ORDER BY au.name ASC`,
@@ -2360,7 +3222,13 @@ const handleAdminGetAuthors: RequestHandler = async (_req, res) => {
         throw queryErr;
       }
     }
-    res.json({ success: true, data: rows });
+    res.json({
+      success: true,
+      data: rows.map((r) => ({
+        ...r,
+        can_publish: r.user_role === "admin" || Number(r.can_publish) === 1,
+      })),
+    });
   } catch (error) {
     res
       .status(500)
@@ -2480,6 +3348,7 @@ const handleAdminUpdateAuthor: RequestHandler = async (req, res) => {
       social_links?: object | null;
       user_email?: string;
       user_role?: string;
+      can_publish?: boolean;
     };
 
     const sets: string[] = [];
@@ -2523,6 +3392,20 @@ const handleAdminUpdateAuthor: RequestHandler = async (req, res) => {
           id,
         ]);
       }
+    }
+
+    // Trusted author: may publish/schedule their own articles
+    if (typeof body.can_publish === "boolean") {
+      await getPool().query("UPDATE users SET can_publish = ? WHERE author_id = ?", [
+        body.can_publish ? 1 : 0,
+        id,
+      ]);
+      await audit(getPool(), {
+        ...auditFrom(req),
+        action: body.can_publish ? "author.can_publish.grant" : "author.can_publish.revoke",
+        entityType: "author",
+        entityId: id,
+      });
     }
 
     res.json({ success: true, data: { id } });
@@ -3310,7 +4193,7 @@ const handleAdminListRevisions: RequestHandler = async (req, res) => {
               u.name AS user_name, u.email AS user_email
        FROM article_revisions r
        LEFT JOIN users u ON u.id = r.user_id
-       WHERE r.article_id = ?
+       WHERE r.article_id = ? AND r.kind = 'snapshot'
        ORDER BY r.created_at DESC, r.id DESC LIMIT 50`,
       [id],
     );
@@ -3327,11 +4210,39 @@ const handleAdminRestoreRevision: RequestHandler = async (req, res) => {
     if (id == null) return;
     const revId = parseInt(String(req.params.revId));
     const [rows] = await getPool().query<RowDataPacket[]>(
-      "SELECT snapshot FROM article_revisions WHERE id = ? AND article_id = ? LIMIT 1",
+      "SELECT snapshot FROM article_revisions WHERE id = ? AND article_id = ? AND kind = 'snapshot' LIMIT 1",
       [revId, id],
     );
     if (!rows.length) {
       return res.status(404).json({ success: false, message: "Revision not found" });
+    }
+    // Restoring onto a live article without publish rights goes to review too
+    if (!req.adminUser!.canPublish) {
+      const [statusRows] = await getPool().query<RowDataPacket[]>(
+        "SELECT status FROM articles WHERE id = ? LIMIT 1",
+        [id],
+      );
+      if (statusRows[0]?.status === "published") {
+        const restored = parseSnapshot(rows[0].snapshot);
+        const live = await loadArticleSnapshotParts(id);
+        const liveArticle = { ...(live.article ?? {}) } as Record<string, unknown>;
+        delete liveArticle.updated_at;
+        return respondWithPendingEdit(req, res, id, {
+          article: {
+            ...liveArticle,
+            title: restored.article.title,
+            slug: restored.article.slug,
+            excerpt: restored.article.excerpt ?? null,
+            content: restored.article.content ?? null,
+            category_id: restored.article.category_id,
+            subcategory_id: restored.article.subcategory_id ?? null,
+            image_url: restored.article.image_url ?? null,
+            read_time_minutes: restored.article.read_time_minutes ?? 5,
+          },
+          blocks: restored.blocks,
+          tags: restored.tags ?? live.tags,
+        });
+      }
     }
     const snap = (typeof rows[0].snapshot === "string"
       ? JSON.parse(rows[0].snapshot)
@@ -3585,6 +4496,52 @@ function createServer() {
     "/api/admin/articles/featured-count",
     requireAdminAuth,
     handleAdminFeaturedCount,
+  );
+  expressApp.get(
+    "/api/admin/articles/slug-available",
+    requireAdminAuth,
+    handleAdminSlugAvailable,
+  );
+
+  // Review workflow (approvals: admin only)
+  expressApp.get("/api/admin/reviews", requireAdminAuth, requireAdmin, handleAdminGetReviews);
+  expressApp.post(
+    "/api/admin/articles/:id/approve",
+    requireAdminAuth,
+    requireAdmin,
+    handleAdminApproveArticle,
+  );
+  expressApp.post(
+    "/api/admin/articles/:id/return",
+    requireAdminAuth,
+    requireAdmin,
+    handleAdminReturnArticle,
+  );
+  expressApp.post(
+    "/api/admin/revisions/:revId/approve",
+    requireAdminAuth,
+    requireAdmin,
+    handleAdminApproveRevision,
+  );
+  expressApp.post(
+    "/api/admin/revisions/:revId/reject",
+    requireAdminAuth,
+    requireAdmin,
+    handleAdminRejectRevision,
+  );
+  expressApp.get("/api/admin/articles/:id/notes", requireAdminAuth, handleAdminGetArticleNotes);
+
+  // Notifications (per signed-in user)
+  expressApp.get("/api/admin/notifications", requireAdminAuth, handleAdminGetNotifications);
+  expressApp.post(
+    "/api/admin/notifications/read-all",
+    requireAdminAuth,
+    handleAdminReadAllNotifications,
+  );
+  expressApp.post(
+    "/api/admin/notifications/:id/read",
+    requireAdminAuth,
+    handleAdminReadNotification,
   );
   expressApp.get(
     "/api/admin/articles/:id",

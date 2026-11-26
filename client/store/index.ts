@@ -19,8 +19,11 @@ import searchReducer from "./slices/searchSlice";
 import tagsReducer from "./slices/tagsSlice";
 import searchPageReducer from "./slices/searchPageSlice";
 import bookmarksReducer from "./slices/bookmarksSlice";
+import articleEditorReducer from "./slices/articleEditorSlice";
 import revisionsReducer from "./slices/revisionsSlice";
 import adminAuditReducer from "./slices/adminAuditSlice";
+import adminReviewsReducer from "./slices/adminReviewsSlice";
+import notificationsReducer from "./slices/notificationsSlice";
 import type { RootState } from "./types";
 
 export const store = configureStore({
@@ -45,8 +48,11 @@ export const store = configureStore({
     tags: tagsReducer,
     searchPage: searchPageReducer,
     bookmarks: bookmarksReducer,
+    articleEditor: articleEditorReducer,
     revisions: revisionsReducer,
     adminAudit: adminAuditReducer,
+    adminReviews: adminReviewsReducer,
+    notifications: notificationsReducer,
   },
 });
 

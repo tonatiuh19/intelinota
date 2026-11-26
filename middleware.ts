@@ -74,8 +74,8 @@ async function articleMeta(slug: string, origin: string): Promise<PageMeta | nul
     .join("\n");
   const plain = stripHtml(text || a.content || "");
   return {
-    title: `${a.title} | ${SITE}`,
-    description: a.excerpt || plain.slice(0, 160),
+    title: `${a.meta_title || a.title} | ${SITE}`,
+    description: a.meta_description || a.excerpt || plain.slice(0, 160),
     image,
     type: "article",
     publishedAt: a.published_at,
@@ -85,10 +85,10 @@ async function articleMeta(slug: string, origin: string): Promise<PageMeta | nul
       "@context": "https://schema.org",
       "@type": "NewsArticle",
       headline: String(a.title).slice(0, 110),
-      description: a.excerpt,
+      description: a.meta_description || a.excerpt,
       image: [image],
       datePublished: a.published_at,
-      dateModified: a.published_at,
+      dateModified: a.updated_at || a.published_at,
       articleSection: a.category_name,
       inLanguage: "es-MX",
       mainEntityOfPage: url,
@@ -195,6 +195,17 @@ export default async function middleware(request: Request): Promise<Response | u
   if (!slug) return undefined;
 
   const origin = url.origin;
+
+  // Renamed article: permanent redirect to the current slug
+  if (kind === "articulo") {
+    const probe = await getJson<{ redirect?: string }>(
+      `${origin}/api/articles/${encodeURIComponent(slug)}`,
+    );
+    if (probe?.redirect && probe.redirect !== slug) {
+      return Response.redirect(`${origin}/articulo/${encodeURIComponent(probe.redirect)}${url.search}`, 301);
+    }
+  }
+
   const [shell, meta] = await Promise.all([
     fetch(`${origin}/index.html`).then((r) => (r.ok ? r.text() : null)).catch(() => null),
     kind === "articulo"

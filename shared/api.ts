@@ -79,6 +79,10 @@ export interface Article {
   status: ArticleStatus;
   published_at: string | null;
   view_count: number;
+  /** SEO overrides (fall back to title / excerpt when null) */
+  meta_title?: string | null;
+  meta_description?: string | null;
+  updated_at?: string;
 }
 
 // ── Content Blocks ───────────────────────────────────────────
@@ -239,6 +243,10 @@ export interface AdminUser {
   role: AdminRole;
   author_id: number | null;
   avatar_url: string | null;
+  /** Admins always true; authors when granted "trusted author" */
+  can_publish?: boolean;
+  /** IANA zone, e.g. "America/Mexico_City" */
+  newsroom_timezone?: string;
   bio?: string | null;
   twitter_handle?: string | null;
   social_links?: SocialLinks | null;
@@ -249,6 +257,7 @@ export interface AdminAuthor extends Author {
   email: string | null;
   user_id: number | null;
   user_role: AdminRole | null;
+  can_publish?: boolean;
 }
 
 // Article with full fields including draft/archived (admin sees all statuses)
@@ -303,6 +312,10 @@ export interface UpsertArticlePayload {
   blocks?: UpsertBlockPayload[];
   /** Tag names; created on the fly */
   tags?: string[];
+  meta_title?: string | null;
+  meta_description?: string | null;
+  /** Optimistic concurrency: the updated_at the editor loaded (ISO) */
+  expected_updated_at?: string;
 }
 
 export interface UpsertBlockPayload {
@@ -323,6 +336,8 @@ export interface UpsertAuthorPayload {
   // If provided, creates/links a user account for this author
   user_email?: string;
   user_role?: AdminRole;
+  /** Trusted author: may publish/schedule own articles (admin-only toggle) */
+  can_publish?: boolean;
 }
 
 // ── Admin API response types ─────────────────────────────────
@@ -335,7 +350,12 @@ export type AuthVerifyCodeResponse = ApiSuccess<{
 export type DashboardResponse = ApiSuccess<DashboardStats>;
 export type AdminArticlesResponse = PaginatedResponse<AdminArticle>;
 export type AdminArticleResponse = ApiSuccess<
-  AdminArticle & { blocks: ContentBlock[]; tags?: string[] }
+  AdminArticle & {
+    blocks: ContentBlock[];
+    tags?: string[];
+    /** Caller's own unreviewed edit of this live article */
+    pending_revision?: { id: number; created_at: string | null } | null;
+  }
 >;
 export type AdminAuthorsResponse = ApiSuccess<AdminAuthor[]>;
 export type AdminAuthorResponse = ApiSuccess<AdminAuthor>;
@@ -430,7 +450,125 @@ export interface AuditEntry {
   user_email: string | null;
 }
 export type AuditLogResponse = PaginatedResponse<AuditEntry>;
-export type ArticleFullResponse = ApiSuccess<ArticleFullData>;
+/** Public GET /api/articles/:slug — `{ redirect }` when the slug was renamed */
+export type ArticleFullResponse = ApiSuccess<ArticleFullData | ArticleRedirectData>;
+export interface ArticleRedirectData {
+  redirect: string;
+}
+
+// ── Newsroom workflow ────────────────────────────────────────
+
+/** GET /api/admin/articles/slug-available?slug=&exclude_id= */
+export type SlugAvailabilityResponse = ApiSuccess<{ available: boolean; suggestion: string }>;
+
+/** POST/PUT /api/admin/articles — 200/201 save */
+export interface ArticleSavedData {
+  id: number;
+  status: ArticleStatus;
+  updated_at: string | null;
+}
+/** PUT /api/admin/articles/:id — 202 when a live edit needs review */
+export interface ArticlePendingData {
+  id: number;
+  pending: true;
+  revision_id: number;
+}
+export type ArticleSaveResponse = ApiSuccess<ArticleSavedData | ArticlePendingData>;
+/** PUT 409 bodies */
+export interface ArticleConflictError {
+  success: false;
+  code: "CONFLICT";
+  message: string;
+  data: { updated_at: string | null };
+}
+
+export interface ReviewQueueArticle {
+  id: number;
+  slug: string;
+  title: string;
+  excerpt: string | null;
+  status: ArticleStatus;
+  image_url: string | null;
+  author_id: number;
+  author_name: string;
+  category_name: string;
+  submitted_at: string | null;
+  updated_at: string | null;
+}
+
+export interface ReviewSideText {
+  title: string;
+  excerpt: string | null;
+  slug: string;
+  /** Plain text of content + blocks */
+  text: string;
+}
+
+export interface ReviewPendingEdit {
+  /** Revision id */
+  id: number;
+  article_id: number;
+  slug: string;
+  status: ArticleStatus;
+  author_id: number;
+  author_name: string;
+  user_id: number | null;
+  user_name: string | null;
+  user_email: string | null;
+  submitted_at: string | null;
+  current: ReviewSideText;
+  proposed: ReviewSideText;
+}
+
+export interface ReviewQueueData {
+  in_review: ReviewQueueArticle[];
+  pending_edits: ReviewPendingEdit[];
+  total: number;
+}
+export type ReviewQueueResponse = ApiSuccess<ReviewQueueData>;
+
+export type ReviewNoteAction = "returned" | "approved" | "published" | "comment";
+export interface ReviewNote {
+  id: number;
+  article_id: number;
+  revision_id: number | null;
+  user_id: number | null;
+  action: ReviewNoteAction;
+  note: string | null;
+  created_at: string;
+  user_name: string | null;
+  user_email: string | null;
+}
+export type ReviewNotesResponse = ApiSuccess<ReviewNote[]>;
+
+export interface ApproveArticlePayload {
+  /** Future ISO → scheduled; omitted/past → published now */
+  published_at?: string | null;
+  note?: string;
+}
+export interface ReviewNotePayload {
+  note: string;
+}
+
+export type AdminNotificationType =
+  | "review.submitted"
+  | "review.approved"
+  | "review.published"
+  | "review.returned"
+  | "revision.submitted"
+  | "revision.approved"
+  | "revision.rejected";
+
+export interface AdminNotification {
+  id: number;
+  type: AdminNotificationType;
+  title: string;
+  body: string | null;
+  link: string | null;
+  read_at: string | null;
+  created_at: string;
+}
+export type NotificationsResponse = ApiSuccess<{ items: AdminNotification[]; unread_count: number }>;
 
 export interface CategoryPageData {
   category: Category;

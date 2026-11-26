@@ -67,7 +67,9 @@ CREATE TABLE `articles` (
   `published_at` timestamp NULL DEFAULT NULL,
   `view_count` int(10) UNSIGNED NOT NULL DEFAULT '0',
   `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  `updated_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+  `updated_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  `meta_title` varchar(160) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `meta_description` varchar(320) COLLATE utf8mb4_unicode_ci DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 --
@@ -192,8 +194,54 @@ CREATE TABLE `article_revisions` (
   `status` varchar(20) COLLATE utf8mb4_unicode_ci NOT NULL,
   `snapshot` json NOT NULL COMMENT 'Article fields + blocks at save time',
   `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `kind` enum('snapshot','pending') COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'snapshot',
+  `review_status` enum('pending','approved','rejected') COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `reviewed_by` int(10) UNSIGNED DEFAULT NULL,
+  `reviewed_at` timestamp NULL DEFAULT NULL,
   PRIMARY KEY (`id`),
-  KEY `idx_revisions_article_created` (`article_id`, `created_at`)
+  KEY `idx_revisions_article_created` (`article_id`, `created_at`),
+  KEY `idx_revisions_kind_review` (`kind`, `review_status`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- --------------------------------------------------------
+-- Newsroom workflow tables (migrations 20261126_*)
+-- Migration: editorial review feedback notes
+-- Date: 2026-11-26 12:02:00
+CREATE TABLE `article_review_notes` (
+  `id` int(10) UNSIGNED NOT NULL AUTO_INCREMENT,
+  `article_id` int(10) UNSIGNED NOT NULL,
+  `revision_id` int(10) UNSIGNED DEFAULT NULL,
+  `user_id` int(10) UNSIGNED DEFAULT NULL,
+  `action` enum('returned','approved','published','comment') COLLATE utf8mb4_unicode_ci NOT NULL,
+  `note` text COLLATE utf8mb4_unicode_ci,
+  `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `idx_review_notes_article` (`article_id`, `created_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Migration: in-app notifications for admin/author users
+-- Date: 2026-11-26 12:03:00
+CREATE TABLE `notifications` (
+  `id` int(10) UNSIGNED NOT NULL AUTO_INCREMENT,
+  `user_id` int(10) UNSIGNED NOT NULL,
+  `type` varchar(48) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `title` varchar(255) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `body` text COLLATE utf8mb4_unicode_ci,
+  `link` varchar(512) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `read_at` timestamp NULL DEFAULT NULL,
+  `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `idx_notifications_user_read` (`user_id`, `read_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Migration: keep old slugs of published articles resolvable (301)
+-- Date: 2026-11-26 12:05:00
+CREATE TABLE `article_slug_redirects` (
+  `old_slug` varchar(255) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `article_id` int(10) UNSIGNED NOT NULL,
+  `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`old_slug`),
+  KEY `idx_slug_redirects_article` (`article_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- --------------------------------------------------------
@@ -424,6 +472,7 @@ CREATE TABLE `users` (
   `name` varchar(150) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `avatar_url` varchar(512) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `role` enum('admin','editor','reader','author') COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'reader',
+  `can_publish` tinyint(1) NOT NULL DEFAULT '0',
   `email_verified` tinyint(1) NOT NULL DEFAULT '0',
   `verification_token` varchar(255) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `reset_token` varchar(255) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
