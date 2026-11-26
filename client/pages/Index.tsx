@@ -17,6 +17,7 @@ import {
 import type { Article, Category } from "@shared/api";
 import MetaHead from "@/components/MetaHead";
 import ArticleCard from "@/components/ArticleCard";
+import HeroCarousel from "@/components/HeroCarousel";
 import ScrollReveal from "@/components/motion/ScrollReveal";
 import NewsletterForm from "@/components/NewsletterForm";
 import { mergeJsonLd, buildWebSiteJsonLd, TWITTER_DOMAIN } from "@/lib/seo";
@@ -153,11 +154,13 @@ export default function Index() {
     dispatch(fetchHome());
   }, [dispatch]);
 
-  const { lead, secondary, latest, byCategory } = useMemo(() => {
-    const pool = featured.length ? featured : articles;
-    const lead = pool[0];
-    const used = new Set<number>(lead ? [lead.id] : []);
-    const secondary = pool.filter((a) => !used.has(a.id)).slice(0, 2);
+  const { heroSlides, lead, secondary, latest, byCategory } = useMemo(() => {
+    // Hero: featured stories (top up with latest so there are always 5)
+    const heroSlides = [...featured, ...articles.filter((a) => !featured.some((f) => f.id === a.id))].slice(0, 5);
+    const used = new Set<number>(heroSlides.map((a) => a.id));
+    const rest = articles.filter((a) => !used.has(a.id));
+    const lead = heroSlides[0];
+    const secondary = rest.slice(0, 3);
     secondary.forEach((a) => used.add(a.id));
     const latest = articles.slice(0, 8);
     const byCategory = new Map<number, Article[]>();
@@ -167,7 +170,7 @@ export default function Index() {
       list.push(a);
       byCategory.set(a.category_id, list);
     }
-    return { lead, secondary, latest, byCategory };
+    return { heroSlides, lead, secondary, latest, byCategory };
   }, [featured, articles]);
 
   return (
@@ -199,15 +202,21 @@ export default function Index() {
 
       {lead && (
         <>
+          {/* ── Hero carousel ──────────────────────────────────── */}
+          <div className="container px-4 pt-4 sm:px-6 lg:px-8 lg:pt-6">
+            <HeroCarousel articles={heroSlides} />
+          </div>
+
           {/* ── Front page ─────────────────────────────────────── */}
-          <section className="container px-4 pt-6 sm:px-6 lg:px-8 lg:pt-8">
+          <section className="container mt-12 px-4 sm:px-6 lg:px-8">
             <div className="grid grid-cols-1 gap-8 lg:grid-cols-12 lg:gap-0">
-              {/* Lead + secondary */}
+              {/* Secondary stories */}
               <div className="lg:order-2 lg:col-span-6 lg:px-8">
-                <ArticleCard article={lead} variant="lead" priority />
-                {secondary.length > 0 && (
+                <h2 className="kicker mb-4">Más historias</h2>
+                {secondary[0] && <ArticleCard article={secondary[0]} variant="lead" />}
+                {secondary.length > 1 && (
                   <div className="mt-8 grid grid-cols-1 gap-8 border-t pt-6 sm:grid-cols-2">
-                    {secondary.map((a) => (
+                    {secondary.slice(1).map((a) => (
                       <ArticleCard key={a.id} article={a} variant="grid" />
                     ))}
                   </div>
