@@ -277,8 +277,10 @@ export default function Article() {
         Header, hero and body all share the same center axis.
       */}
       <div className="container px-4 sm:px-6 lg:px-8">
-        {/* ── Header ───────────────────────────────────────────── */}
-        <header className="mx-auto max-w-[720px] pt-8 sm:pt-14">
+        {/* ── Header + hero: stacked on mobile, side-by-side on lg so the
+            article text is reachable without a long scroll ── */}
+        <div className="mx-auto max-w-[1200px] pt-6 sm:pt-10 lg:grid lg:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)] lg:items-center lg:gap-12 lg:pt-10">
+        <header className="mx-auto max-w-[720px] lg:mx-0 lg:max-w-none">
           <nav aria-label="Ruta" className="flex flex-wrap items-center gap-2 text-xs">
             <Link to={categoryUrlPath(article.category_slug)} className="kicker hover:underline">
               {article.category_name}
@@ -290,16 +292,16 @@ export default function Article() {
               </>
             )}
           </nav>
-          <h1 className="mt-4 font-display text-[2rem] font-bold leading-[1.08] tracking-[-0.02em] text-balance sm:text-[2.75rem] lg:text-[3.25rem]">
+          <h1 className="mt-4 font-display text-[2rem] font-bold leading-[1.08] tracking-[-0.02em] text-balance sm:text-[2.75rem] lg:text-[2.6rem] xl:text-[2.9rem]">
             {article.title}
           </h1>
           {article.excerpt && (
-            <p className="mt-5 font-body text-lg leading-relaxed text-muted-foreground text-pretty sm:text-[1.3rem] sm:leading-[1.55]">
+            <p className="mt-5 font-body text-lg leading-relaxed text-muted-foreground text-pretty sm:text-[1.3rem] sm:leading-[1.55] lg:line-clamp-4 lg:text-lg">
               {article.excerpt}
             </p>
           )}
 
-          <div className="mt-8 flex flex-wrap items-center gap-x-4 gap-y-3 border-y py-4">
+          <div className="mt-8 flex flex-wrap items-center gap-x-4 gap-y-3 border-y py-4 lg:mt-6">
             <Link to={`/autor/${article.author_slug}`} className="group flex min-w-0 items-center gap-3">
               <Avatar className="h-11 w-11 ring-2 ring-background">
                 <AvatarImage src={authorProfile?.avatar_url ?? undefined} alt="" />
@@ -334,14 +336,13 @@ export default function Article() {
           </div>
         </header>
 
-        {/* ── Hero art: breaks out of the column, same center axis ── */}
         {article.image_url && (
-          <figure className="mx-auto mt-8 max-w-[1080px] sm:mt-10">
-            <div className="-mx-4 aspect-[16/9] overflow-hidden bg-muted sm:mx-0 sm:rounded-xl">
+          <figure className="mx-auto mt-8 max-w-[1080px] sm:mt-10 lg:mt-0 lg:max-w-none">
+            <div className="-mx-4 aspect-[16/9] overflow-hidden bg-muted sm:mx-0 sm:rounded-xl lg:aspect-[4/3]">
               <img
                 src={articleImageUrl(article.image_url)}
                 srcSet={articleImageSrcSet(article.image_url)}
-                sizes="(min-width: 1120px) 1080px, 100vw"
+                sizes="(min-width: 1024px) 640px, 100vw"
                 alt={article.excerpt ?? article.title}
                 // @ts-expect-error — valid HTML attribute
                 fetchpriority="high"
@@ -351,9 +352,10 @@ export default function Article() {
             </div>
           </figure>
         )}
+        </div>
 
         {/* ── Body with rails ─────────────────────────────────── */}
-        <div className="relative mx-auto mt-10 grid max-w-[1200px] grid-cols-1 sm:mt-14 xl:grid-cols-[200px_minmax(0,720px)_200px] xl:justify-center xl:gap-x-10">
+        <div className="relative mx-auto mt-10 grid max-w-[1200px] grid-cols-1 sm:mt-12 xl:grid-cols-[200px_minmax(0,720px)_200px] xl:justify-center xl:gap-x-10">
           {/* Left rail: share (xl) */}
           <aside className="hidden xl:block" aria-label="Compartir">
             <div className="sticky top-28 flex flex-col items-end gap-2">
