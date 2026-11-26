@@ -34,6 +34,8 @@
   },
   "include": [
     "client/**/*",
+    "api/**/*",
+    "middleware.ts",
     "server/**/*",
     "shared/**/*",
     "vite.config.ts",

@@ -7,12 +7,15 @@ import {
   selectAdminArticles,
   selectAdminArticlesPagination,
   selectAdminArticlesLoading,
+  selectAdminArticlesError,
+  selectAdminArticlesDeleteError,
 } from "@/store/slices/adminArticlesSlice";
-import { selectAdminUser } from "@/store/slices/adminAuthSlice";
+import { fetchHome, selectHomeCategories } from "@/store/slices/homeSlice";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -64,6 +67,14 @@ const STATUS_MAP = {
     label: "Archivado",
     className: "bg-zinc-500/10 text-zinc-400 border-zinc-500/20",
   },
+  scheduled: {
+    label: "Programado",
+    className: "bg-blue-500/10 text-blue-400 border-blue-500/20",
+  },
+  in_review: {
+    label: "En revisión",
+    className: "bg-violet-500/10 text-violet-500 border-violet-500/20",
+  },
 } as const;
 
 export default function AdminArticles() {
@@ -73,28 +84,42 @@ export default function AdminArticles() {
   const articles = useAppSelector(selectAdminArticles);
   const pagination = useAppSelector(selectAdminArticlesPagination);
   const loading = useAppSelector(selectAdminArticlesLoading);
-  const user = useAppSelector(selectAdminUser);
+  const listError = useAppSelector(selectAdminArticlesError);
+  const deleteError = useAppSelector(selectAdminArticlesDeleteError);
+  const categories = useAppSelector(selectHomeCategories);
 
   const [search, setSearch] = useState(searchParams.get("search") ?? "");
+  const [debouncedSearch, setDebouncedSearch] = useState(search);
   const [status, setStatus] = useState(searchParams.get("status") ?? "all");
+  const [category, setCategory] = useState(searchParams.get("category") ?? "all");
   const [page, setPage] = useState(Number(searchParams.get("page") ?? "1"));
   const [deleteId, setDeleteId] = useState<number | null>(null);
 
   const load = useCallback(() => {
     const params: Record<string, string | number> = { page, limit: 20 };
-    if (search) params.search = search;
+    if (debouncedSearch) params.search = debouncedSearch;
     if (status !== "all") params.status = status;
+    if (category !== "all") params.category = category;
     dispatch(fetchAdminArticles(params));
-  }, [dispatch, page, search, status]);
+  }, [dispatch, page, debouncedSearch, status, category]);
+
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(search), 300);
+    return () => clearTimeout(t);
+  }, [search]);
+
+  useEffect(() => {
+    dispatch(fetchHome());
+  }, [dispatch]);
 
   useEffect(() => {
     load();
-    // Sync URL
     const sp: Record<string, string> = { page: String(page) };
-    if (search) sp.search = search;
+    if (debouncedSearch) sp.search = debouncedSearch;
     if (status !== "all") sp.status = status;
+    if (category !== "all") sp.category = category;
     setSearchParams(sp, { replace: true });
-  }, [load, page, search, status]);
+  }, [load, page, debouncedSearch, status, category, setSearchParams]);
 
   const handleSearchSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -103,9 +128,13 @@ export default function AdminArticles() {
 
   const handleDelete = async () => {
     if (deleteId == null) return;
-    await dispatch(deleteAdminArticle(deleteId));
-    setDeleteId(null);
-    load();
+    try {
+      await dispatch(deleteAdminArticle(deleteId)).unwrap();
+      setDeleteId(null);
+      load();
+    } catch {
+      // deleteError shown in alert
+    }
   };
 
   return (
@@ -130,6 +159,23 @@ export default function AdminArticles() {
           </Link>
         </Button>
       </div>
+
+      {listError && (
+        <Alert variant="destructive">
+          <AlertDescription className="flex flex-wrap items-center justify-between gap-4">
+            <span>{listError}</span>
+            <Button variant="outline" size="sm" onClick={load}>
+              Reintentar
+            </Button>
+          </AlertDescription>
+        </Alert>
+      )}
+
+      {deleteError && (
+        <Alert variant="destructive">
+          <AlertDescription>{deleteError}</AlertDescription>
+        </Alert>
+      )}
 
       {/* Filters */}
       <div className="flex gap-3 flex-wrap">
@@ -161,8 +207,29 @@ export default function AdminArticles() {
           <SelectContent>
             <SelectItem value="all">Todos</SelectItem>
             <SelectItem value="published">Publicados</SelectItem>
+            <SelectItem value="in_review">En revisión</SelectItem>
             <SelectItem value="draft">Borradores</SelectItem>
             <SelectItem value="archived">Archivados</SelectItem>
+            <SelectItem value="scheduled">Programados</SelectItem>
+          </SelectContent>
+        </Select>
+        <Select
+          value={category}
+          onValueChange={(v) => {
+            setCategory(v);
+            setPage(1);
+          }}
+        >
+          <SelectTrigger className="w-40 bg-accent/40 border-border h-9">
+            <SelectValue placeholder="Categoría" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">Todas</SelectItem>
+            {categories.map((c) => (
+              <SelectItem key={c.id} value={c.slug}>
+                {c.name}
+              </SelectItem>
+            ))}
           </SelectContent>
         </Select>
       </div>

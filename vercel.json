@@ -3,18 +3,60 @@
   "installCommand": "npm install",
   "buildCommand": "npm run build",
   "outputDirectory": "dist",
-  "routes": [
+  "crons": [
     {
-      "src": "/api/(.*)",
-      "dest": "/api/index.ts"
+      "path": "/api/cron/publish-scheduled",
+      "schedule": "*/5 * * * *"
+    }
+  ],
+  "headers": [
+    {
+      "source": "/assets/(.*)",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "public, max-age=31536000, immutable"
+        }
+      ]
     },
     {
-      "src": "/(.*\\.(js|css|json|png|jpg|jpeg|gif|svg|ico|woff|woff2|ttf|eot))",
-      "dest": "/$1"
+      "source": "/(.*)",
+      "headers": [
+        {
+          "key": "X-Content-Type-Options",
+          "value": "nosniff"
+        },
+        {
+          "key": "X-Frame-Options",
+          "value": "SAMEORIGIN"
+        },
+        {
+          "key": "Referrer-Policy",
+          "value": "strict-origin-when-cross-origin"
+        },
+        {
+          "key": "Permissions-Policy",
+          "value": "camera=(), microphone=(), geolocation=()"
+        },
+        {
+          "key": "Strict-Transport-Security",
+          "value": "max-age=63072000; includeSubDomains; preload"
+        }
+      ]
+    }
+  ],
+  "rewrites": [
+    {
+      "source": "/(sitemap\\.xml|news-sitemap\\.xml|rss\\.xml)",
+      "destination": "/api/index.ts"
     },
     {
-      "src": "/(.*)",
-      "dest": "/index.html"
+      "source": "/api/(.*)",
+      "destination": "/api/index.ts"
+    },
+    {
+      "source": "/((?!assets/|.*\\.[a-z0-9]+$).*)",
+      "destination": "/index.html"
     }
   ]
 }

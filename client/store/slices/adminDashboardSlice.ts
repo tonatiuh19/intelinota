@@ -54,5 +54,6 @@ const adminDashboardSlice = createSlice({
 export const selectDashboardStats = (s: RootState) => s.adminDashboard.stats;
 export const selectDashboardLoading = (s: RootState) =>
   s.adminDashboard.loading;
+export const selectDashboardError = (s: RootState) => s.adminDashboard.error;
 
 export default adminDashboardSlice.reducer;

@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
 import {
@@ -8,6 +8,8 @@ import {
   clearCurrent,
   clearSaveError,
   selectAdminArticlesCurrent,
+  selectAdminArticlesCurrentLoading,
+  selectAdminArticlesCurrentError,
   selectAdminArticlesSaving,
   selectAdminArticlesSaveError,
   fetchFeaturedCount,
@@ -18,8 +20,8 @@ import {
   selectAdminAuthors,
   fetchAdminAuthors,
 } from "@/store/slices/adminAuthorsSlice";
-import { useAppSelector as useSelector } from "@/store/hooks";
-import { useAppSelector as useAppSel } from "@/store/hooks";
+import { fetchHome, selectHomeCategories } from "@/store/slices/homeSlice";
+import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -27,6 +29,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
   Select,
   SelectContent,
@@ -34,7 +37,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { fetchHome, selectHomeCategories } from "@/store/slices/homeSlice";
 import {
   Dialog,
   DialogContent,
@@ -42,7 +44,9 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import RichHtmlEditor from "@/components/RichHtmlEditor";
+import ArticleBlock from "@/components/ArticleBlock";
 import type {
+  ArticleStatus,
   ContentBlockType,
   ContentBlock,
   ContentBlockData,
@@ -69,6 +73,8 @@ import {
   Sparkles,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import ImageUploadCrop from "@/components/ImageUploadCrop";
+import RevisionsPanel from "@/components/admin/RevisionsPanel";
 
 // ── Slug generator ────────────────────────────────────────────
 function toSlug(text: string): string {
@@ -121,9 +127,13 @@ const defaultBlockData = (type: ContentBlockType): ContentBlockData => {
 function BlockEditor({
   block,
   onChange,
+  articleUploadId,
+  blockIndex,
 }: {
   block: UpsertBlockPayload;
   onChange: (data: ContentBlockData) => void;
+  articleUploadId: string;
+  blockIndex: number;
 }) {
   const data = block.data as Record<string, string>;
 
@@ -170,13 +180,20 @@ function BlockEditor({
       );
     case "image":
       return (
-        <div className="grid grid-cols-2 gap-3">
-          <div className="col-span-2">
-            {field("url", "URL de imagen *", false, "https://...")}
+        <div className="space-y-3">
+          <ImageUploadCrop
+            value={data.url ?? ""}
+            onChange={(url) => onChange({ ...data, url } as ContentBlockData)}
+            uploadId={`${articleUploadId}_block_${blockIndex}`}
+            aspectRatio={16 / 9}
+            label="Imagen del bloque"
+            previewShape="rect"
+          />
+          <div className="grid grid-cols-2 gap-3">
+            {field("alt", "Alt text", false, "Descripción de la imagen")}
+            {field("caption", "Pie de foto", false, "Descripción visible")}
+            {field("credit", "Crédito", false, "Fuente / fotógrafo")}
           </div>
-          {field("alt", "Alt text", false, "Descripción de la imagen")}
-          {field("caption", "Pie de foto", false, "Descripción visible")}
-          {field("credit", "Crédito", false, "Fuente / fotógrafo")}
         </div>
       );
     case "youtube":
@@ -240,8 +257,9 @@ interface ArticleForm {
   read_time_minutes: string;
   featured: boolean;
   trending: boolean;
-  status: "draft" | "published" | "archived" | "scheduled";
+  status: ArticleStatus;
   published_at: string;
+  tags: string;
 }
 
 const EMPTY_FORM: ArticleForm = {
@@ -258,6 +276,7 @@ const EMPTY_FORM: ArticleForm = {
   trending: false,
   status: "draft",
   published_at: "",
+  tags: "",
 };
 
 export default function ArticleEditor() {
@@ -267,9 +286,12 @@ export default function ArticleEditor() {
   const dispatch = useAppDispatch();
 
   const current = useAppSelector(selectAdminArticlesCurrent);
+  const currentLoading = useAppSelector(selectAdminArticlesCurrentLoading);
+  const currentError = useAppSelector(selectAdminArticlesCurrentError);
   const saving = useAppSelector(selectAdminArticlesSaving);
   const saveError = useAppSelector(selectAdminArticlesSaveError);
   const user = useAppSelector(selectAdminUser);
+  const { toast } = useToast();
   const categories = useAppSelector(selectHomeCategories);
   const authors = useAppSelector(selectAdminAuthors);
   const featuredCount = useAppSelector(selectAdminArticlesFeaturedCount);
@@ -281,6 +303,10 @@ export default function ArticleEditor() {
   const [showPreview, setShowPreview] = useState(false);
   const [dragIdx, setDragIdx] = useState<number | null>(null);
   const [dragOverIdx, setDragOverIdx] = useState<number | null>(null);
+  // Stable upload ID: article_<id> for existing, article_temp_<ts> for new
+  const tempUploadIdRef = useRef(`article_temp_${Date.now()}`);
+  const articleUploadId =
+    isEditing && id ? `article_${id}` : tempUploadIdRef.current;
 
   // Load categories + authors
   useEffect(() => {
@@ -318,6 +344,7 @@ export default function ArticleEditor() {
         published_at: current.published_at
           ? new Date(current.published_at).toISOString().slice(0, 16)
           : "",
+        tags: (current.tags ?? []).join(", "),
       });
       setSlugEdited(true);
       if (current.blocks) {
@@ -428,11 +455,7 @@ export default function ArticleEditor() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [blocks, form.excerpt, form.title]);
   const buildPayload = () => {
-    const finalStatus = form.status as
-      | "draft"
-      | "published"
-      | "archived"
-      | "scheduled";
+    const finalStatus: ArticleStatus = form.status;
     const finalPublishedAt =
       finalStatus === "published" && !form.published_at
         ? new Date().toISOString()
@@ -460,6 +483,10 @@ export default function ArticleEditor() {
       status: finalStatus,
       published_at: finalPublishedAt,
       blocks,
+      tags: form.tags
+        .split(",")
+        .map((t) => t.trim())
+        .filter(Boolean),
     };
   };
 
@@ -467,11 +494,49 @@ export default function ArticleEditor() {
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     dispatch(clearSaveError());
-    if (!form.title || !form.slug || !form.category_id || !form.author_id)
+    if (!form.title || !form.slug || !form.category_id || !form.author_id) {
+      toast({
+        title: "Campos requeridos",
+        description: "Completa título, slug, categoría y autor.",
+        variant: "destructive",
+      });
       return;
-    if (form.status === "scheduled" && !form.published_at) return;
+    }
+    if (form.status === "scheduled" && !form.published_at) {
+      toast({
+        title: "Fecha requerida",
+        description: "Indica la fecha de publicación programada.",
+        variant: "destructive",
+      });
+      return;
+    }
     setShowPreview(true);
   };
+
+  const previewStatusLabel = (() => {
+    if (user?.role !== "admin")
+      return form.status === "in_review"
+        ? "Se enviará a revisión editorial"
+        : "Se guardará como borrador";
+    if (form.status === "in_review") return "Quedará en revisión";
+    if (form.status === "published") return "Se publicará al guardar";
+    if (form.status === "scheduled") return "Se programará al guardar";
+    if (form.status === "archived") return "Se archivará al guardar";
+    return "Se guardará como borrador";
+  })();
+
+  const previewSaveLabel =
+    user?.role !== "admin"
+      ? form.status === "in_review"
+        ? "Enviar a revisión"
+        : "Guardar borrador"
+      : form.status === "published"
+        ? "Publicar artículo"
+        : form.status === "scheduled"
+          ? "Programar artículo"
+          : form.status === "archived"
+            ? "Archivar artículo"
+            : "Guardar borrador";
 
   // Step 2: confirmed in preview → actually save
   const performSave = async () => {
@@ -505,6 +570,29 @@ export default function ArticleEditor() {
     featuredCount !== null &&
     featuredCount >= 5 &&
     !(isEditing && Boolean(current?.featured));
+
+  if (isEditing && currentLoading && !current) {
+    return (
+      <div className="max-w-5xl mx-auto space-y-6">
+        <Skeleton className="h-10 w-64" />
+        <Skeleton className="h-96 w-full rounded-xl" />
+        <Skeleton className="h-48 w-full rounded-xl" />
+      </div>
+    );
+  }
+
+  if (isEditing && currentError && !current) {
+    return (
+      <div className="max-w-5xl mx-auto space-y-4">
+        <Alert variant="destructive">
+          <AlertDescription>{currentError}</AlertDescription>
+        </Alert>
+        <Button variant="outline" onClick={() => navigate("/admin/articles")}>
+          Volver a artículos
+        </Button>
+      </div>
+    );
+  }
 
   return (
     <div className="max-w-5xl mx-auto space-y-6">
@@ -638,28 +726,18 @@ export default function ArticleEditor() {
               />
             </div>
 
-            {/* Image URL */}
+            {/* Image upload */}
             <div className="space-y-2">
               <Label htmlFor="image_url" className="text-sm font-medium">
-                URL de imagen principal
+                Imagen principal
               </Label>
-              <Input
-                id="image_url"
+              <ImageUploadCrop
                 value={form.image_url}
-                onChange={(e) =>
-                  setForm((f) => ({ ...f, image_url: e.target.value }))
-                }
-                placeholder="https://images.unsplash.com/..."
-                className="bg-accent/40 border-border h-9 text-sm"
+                onChange={(url) => setForm((f) => ({ ...f, image_url: url }))}
+                uploadId={articleUploadId}
+                aspectRatio={16 / 9}
+                previewShape="rect"
               />
-              {form.image_url && (
-                <img
-                  src={form.image_url}
-                  alt="preview"
-                  className="rounded-lg object-cover w-full max-h-48 mt-2"
-                  onError={(e) => (e.currentTarget.style.display = "none")}
-                />
-              )}
             </div>
 
             {/* Content Blocks section */}
@@ -779,6 +857,8 @@ export default function ArticleEditor() {
                           <BlockEditor
                             block={block}
                             onChange={(data) => updateBlockData(idx, data)}
+                            articleUploadId={articleUploadId}
+                            blockIndex={idx}
                           />
                         )}
                       </div>
@@ -791,6 +871,12 @@ export default function ArticleEditor() {
 
           {/* Sidebar column */}
           <div className="space-y-4">
+            {isEditing && id && (
+              <RevisionsPanel
+                articleId={parseInt(id)}
+                onRestored={() => dispatch(fetchAdminArticle(parseInt(id)))}
+              />
+            )}
             {/* Status */}
             <div className="rounded-xl border border-border bg-card/60 p-4 space-y-4">
               <h3 className="text-sm font-semibold text-foreground">
@@ -802,9 +888,7 @@ export default function ArticleEditor() {
                 {user?.role === "admin" ? (
                   <Select
                     value={form.status}
-                    onValueChange={(
-                      v: "draft" | "published" | "archived" | "scheduled",
-                    ) =>
+                    onValueChange={(v: ArticleStatus) =>
                       setForm((f) => ({
                         ...f,
                         status: v,
@@ -820,6 +904,7 @@ export default function ArticleEditor() {
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="draft">Borrador</SelectItem>
+                      <SelectItem value="in_review">En revisión</SelectItem>
                       <SelectItem value="published">Publicado</SelectItem>
                       <SelectItem value="scheduled">
                         Programar publicación
@@ -830,13 +915,8 @@ export default function ArticleEditor() {
                 ) : (
                   <>
                     <Select
-                      value={
-                        form.status === "published" ||
-                        form.status === "scheduled"
-                          ? "draft"
-                          : form.status
-                      }
-                      onValueChange={(v: "draft" | "archived") =>
+                      value={form.status === "in_review" ? "in_review" : "draft"}
+                      onValueChange={(v: "draft" | "in_review") =>
                         setForm((f) => ({ ...f, status: v, published_at: "" }))
                       }
                     >
@@ -845,13 +925,40 @@ export default function ArticleEditor() {
                       </SelectTrigger>
                       <SelectContent>
                         <SelectItem value="draft">Borrador</SelectItem>
-                        <SelectItem value="archived">Archivado</SelectItem>
+                        <SelectItem value="in_review">Enviar a revisión</SelectItem>
                       </SelectContent>
                     </Select>
                     <p className="text-xs text-muted-foreground">
-                      Un administrador revisará y publicará el artículo.
+                      Un editor revisará y publicará el artículo.
                     </p>
                   </>
+                )}
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="article-tags" className="text-xs text-muted-foreground">
+                  Temas (separados por coma)
+                </Label>
+                <Input
+                  id="article-tags"
+                  value={form.tags}
+                  onChange={(e) => setForm((f) => ({ ...f, tags: e.target.value }))}
+                  placeholder="IA, OpenAI, Startups"
+                  className="h-9 text-sm"
+                />
+                {form.tags.trim() && (
+                  <div className="flex flex-wrap gap-1">
+                    {form.tags
+                      .split(",")
+                      .map((t) => t.trim())
+                      .filter(Boolean)
+                      .slice(0, 12)
+                      .map((t) => (
+                        <Badge key={t} variant="secondary" className="text-[10px]">
+                          {t}
+                        </Badge>
+                      ))}
+                  </div>
                 )}
               </div>
 
@@ -891,6 +998,7 @@ export default function ArticleEditor() {
                 </div>
               )}
 
+              {user?.role === "admin" && (
               <div className="space-y-3 pt-1">
                 <div className="space-y-1">
                   <div className="flex items-center justify-between">
@@ -903,7 +1011,6 @@ export default function ArticleEditor() {
                         setForm((f) => ({
                           ...f,
                           featured: v,
-                          // disabling featured also removes trending
                           trending: v ? f.trending : false,
                         }))
                       }
@@ -926,7 +1033,6 @@ export default function ArticleEditor() {
                         setForm((f) => ({
                           ...f,
                           trending: v,
-                          // enabling trending requires featured
                           featured: v ? true : f.featured,
                         }))
                       }
@@ -938,6 +1044,7 @@ export default function ArticleEditor() {
                   </p>
                 </div>
               </div>
+              )}
             </div>
 
             {/* Category */}
@@ -1065,11 +1172,11 @@ export default function ArticleEditor() {
               </DialogTitle>
               {user?.role === "admin" ? (
                 <Badge className="bg-green-500/15 text-green-400 border border-green-500/30 text-xs font-medium">
-                  Se publicará automáticamente
+                  {previewStatusLabel}
                 </Badge>
               ) : (
                 <Badge className="bg-yellow-500/15 text-yellow-400 border border-yellow-500/30 text-xs font-medium">
-                  Pendiente de aprobación
+                  {previewStatusLabel}
                 </Badge>
               )}
             </div>
@@ -1176,11 +1283,7 @@ export default function ArticleEditor() {
               ) : (
                 <Save className="w-4 h-4 mr-2" />
               )}
-              {saving
-                ? "Guardando…"
-                : user?.role === "admin"
-                  ? "Publicar artículo"
-                  : "Guardar borrador"}
+              {saving ? "Guardando…" : previewSaveLabel}
             </Button>
           </div>
         </DialogContent>
@@ -1190,64 +1293,12 @@ export default function ArticleEditor() {
 }
 
 function BlockPreview({ block }: { block: UpsertBlockPayload }) {
-  const data = block.data as Record<string, string>;
-  switch (block.type) {
-    case "html":
-      return (
-        <div
-          className="prose prose-invert prose-sm max-w-none text-foreground/80"
-          dangerouslySetInnerHTML={{ __html: data.html ?? "" }}
-        />
-      );
-    case "image":
-      return (
-        <figure className="space-y-1">
-          {data.url && (
-            <img
-              src={data.url}
-              alt={data.alt ?? ""}
-              className="rounded-lg w-full object-cover max-h-56"
-              onError={(e) => (e.currentTarget.style.display = "none")}
-            />
-          )}
-          {data.caption && (
-            <figcaption className="text-xs text-muted-foreground text-center">
-              {data.caption}
-            </figcaption>
-          )}
-        </figure>
-      );
-    case "youtube":
-      return data.video_id ? (
-        <div className="aspect-video rounded-lg overflow-hidden bg-black/40">
-          <iframe
-            src={`https://www.youtube-nocookie.com/embed/${data.video_id}`}
-            className="w-full h-full"
-            allowFullScreen
-            title="YouTube video"
-          />
-        </div>
-      ) : (
-        <span className="text-xs text-muted-foreground">Sin video ID</span>
-      );
-    case "quote":
-      return (
-        <blockquote className="border-l-2 border-blue-500 pl-4">
-          <p className="text-sm italic text-foreground/80">{data.text}</p>
-          {data.attribution && (
-            <footer className="text-xs text-muted-foreground mt-1">
-              — {data.attribution}
-            </footer>
-          )}
-        </blockquote>
-      );
-    case "divider":
-      return <hr className="border-border" />;
-    default:
-      return (
-        <pre className="text-xs text-muted-foreground overflow-auto">
-          {JSON.stringify(data, null, 2)}
-        </pre>
-      );
-  }
+  const previewBlock: ContentBlock = {
+    id: block.id ?? 0,
+    article_id: 0,
+    position: block.position,
+    type: block.type,
+    data: block.data,
+  };
+  return <ArticleBlock block={previewBlock} />;
 }

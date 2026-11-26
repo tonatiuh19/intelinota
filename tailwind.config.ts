@@ -2,7 +2,7 @@ import type { Config } from "tailwindcss";
 
 export default {
   darkMode: ["class"],
-  content: ["./client/**/*.{ts,tsx}"],
+  content: ["./index.html", "./client/**/*.{ts,tsx}"],
   prefix: "",
   theme: {
     container: {
@@ -13,7 +13,26 @@ export default {
       },
     },
     extend: {
+      fontFamily: {
+        sans: ["Inter", "ui-sans-serif", "system-ui", "sans-serif"],
+        display: ["Fraunces", "Georgia", "ui-serif", "serif"],
+        body: ['"Source Serif 4"', "Georgia", "ui-serif", "serif"],
+      },
+      fontSize: {
+        "display-xl": ["clamp(2.25rem, 1.4rem + 3.6vw, 4.5rem)", { lineHeight: "1.02", letterSpacing: "-0.025em" }],
+        "display-lg": ["clamp(1.75rem, 1.2rem + 2.2vw, 3rem)", { lineHeight: "1.08", letterSpacing: "-0.02em" }],
+        "display-md": ["clamp(1.375rem, 1.1rem + 1.1vw, 2rem)", { lineHeight: "1.15", letterSpacing: "-0.015em" }],
+        "display-sm": ["clamp(1.125rem, 1rem + 0.4vw, 1.375rem)", { lineHeight: "1.2", letterSpacing: "-0.01em" }],
+      },
+      maxWidth: {
+        measure: "68ch",
+      },
       colors: {
+        brand: {
+          DEFAULT: "hsl(var(--brand))",
+          foreground: "hsl(var(--brand-foreground))",
+        },
+        rule: "hsl(var(--rule))",
         border: "hsl(var(--border))",
         input: "hsl(var(--input))",
         ring: "hsl(var(--ring))",
@@ -80,10 +99,18 @@ export default {
             height: "0",
           },
         },
+        ticker: {
+          from: { transform: "translateX(0)" },
+          to: { transform: "translateX(-50%)" },
+        },
       },
       animation: {
         "accordion-down": "accordion-down 0.2s ease-out",
         "accordion-up": "accordion-up 0.2s ease-out",
+        ticker: "ticker 40s linear infinite",
+      },
+      transitionTimingFunction: {
+        editorial: "cubic-bezier(0.22, 1, 0.36, 1)",
       },
     },
   },

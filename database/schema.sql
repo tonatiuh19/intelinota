@@ -18,7 +18,7 @@ SET time_zone = "+00:00";
 /*!40101 SET NAMES utf8mb4 */;
 
 --
--- Database: `alanchat_intelinota`
+-- Database: `intelinota`
 --
 
 -- --------------------------------------------------------
@@ -63,7 +63,7 @@ CREATE TABLE `articles` (
   `read_time_minutes` smallint(5) UNSIGNED NOT NULL DEFAULT '5',
   `featured` tinyint(1) NOT NULL DEFAULT '0',
   `trending` tinyint(1) NOT NULL DEFAULT '0',
-  `status` enum('draft','published','archived') COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'draft',
+  `status` enum('draft','in_review','published','archived','scheduled') COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'draft',
   `published_at` timestamp NULL DEFAULT NULL,
   `view_count` int(10) UNSIGNED NOT NULL DEFAULT '0',
   `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -181,6 +181,44 @@ CREATE TABLE `article_tags` (
 -- --------------------------------------------------------
 
 --
+-- Table structure for table `article_revisions`
+--
+
+CREATE TABLE `article_revisions` (
+  `id` int(10) UNSIGNED NOT NULL AUTO_INCREMENT,
+  `article_id` int(10) UNSIGNED NOT NULL,
+  `user_id` int(10) UNSIGNED DEFAULT NULL,
+  `title` varchar(255) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `status` varchar(20) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `snapshot` json NOT NULL COMMENT 'Article fields + blocks at save time',
+  `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `idx_revisions_article_created` (`article_id`, `created_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `audit_log`
+--
+
+CREATE TABLE `audit_log` (
+  `id` bigint(20) UNSIGNED NOT NULL AUTO_INCREMENT,
+  `user_id` int(10) UNSIGNED DEFAULT NULL,
+  `action` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `entity_type` varchar(32) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `entity_id` int(10) UNSIGNED DEFAULT NULL,
+  `details` json DEFAULT NULL,
+  `ip_hash` char(64) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `idx_audit_created` (`created_at`),
+  KEY `idx_audit_entity` (`entity_type`, `entity_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- --------------------------------------------------------
+
+--
 -- Table structure for table `authors`
 --
 
@@ -192,6 +230,7 @@ CREATE TABLE `authors` (
   `avatar_url` varchar(512) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `email` varchar(255) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `twitter_handle` varchar(100) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `social_links` json DEFAULT NULL COMMENT 'Social network URLs',
   `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
@@ -254,6 +293,7 @@ CREATE TABLE `comments` (
   `parent_id` int(10) UNSIGNED DEFAULT NULL,
   `author_name` varchar(150) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `author_email` varchar(255) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `ip_hash` char(64) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `content` text COLLATE utf8mb4_unicode_ci NOT NULL,
   `status` enum('pending','approved','spam') COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'pending',
   `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -270,6 +310,9 @@ CREATE TABLE `media` (
   `id` int(10) UNSIGNED NOT NULL,
   `filename` varchar(255) COLLATE utf8mb4_unicode_ci NOT NULL,
   `url` varchar(512) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `file_data` longblob DEFAULT NULL,
+  `storage` enum('db','blob') COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'db',
+  `variants` json DEFAULT NULL COMMENT 'Array of {width,url} WebP renditions',
   `mime_type` varchar(100) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `size_bytes` int(10) UNSIGNED DEFAULT NULL,
   `width` smallint(5) UNSIGNED DEFAULT NULL,
@@ -289,10 +332,36 @@ CREATE TABLE `newsletter_subscribers` (
   `id` int(10) UNSIGNED NOT NULL,
   `email` varchar(255) COLLATE utf8mb4_unicode_ci NOT NULL,
   `name` varchar(150) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
-  `status` enum('active','unsubscribed') COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'active',
+  `source` varchar(64) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT 'Signup source',
+  `status` enum('pending','active','unsubscribed') COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'pending',
+  `confirm_token` varchar(64) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `unsubscribe_token` varchar(64) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `subscribed_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `confirmed_at` timestamp NULL DEFAULT NULL,
   `unsubscribed_at` timestamp NULL DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `system_settings`
+--
+
+CREATE TABLE `system_settings` (
+  `id` int(10) UNSIGNED NOT NULL,
+  `setting_key` varchar(100) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `setting_value` text COLLATE utf8mb4_unicode_ci,
+  `setting_type` enum('string','number','boolean','json') COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'string',
+  `description` text COLLATE utf8mb4_unicode_ci,
+  `updated_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+--
+-- Dumping data for table `system_settings`
+--
+
+INSERT INTO `system_settings` (`id`, `setting_key`, `setting_value`, `setting_type`, `description`, `updated_at`) VALUES
+(1, 'app_version', 'v1.0.0', 'string', 'Current deployed application version shown in the site footer.', CURRENT_TIMESTAMP);
 
 -- --------------------------------------------------------
 
@@ -558,7 +627,8 @@ ALTER TABLE `comments`
   ADD PRIMARY KEY (`id`),
   ADD KEY `user_id` (`user_id`),
   ADD KEY `parent_id` (`parent_id`),
-  ADD KEY `idx_article_status` (`article_id`,`status`);
+  ADD KEY `idx_article_status` (`article_id`,`status`),
+  ADD KEY `idx_comments_ip_created` (`ip_hash`,`created_at`);
 
 --
 -- Indexes for table `media`
@@ -573,7 +643,16 @@ ALTER TABLE `media`
 ALTER TABLE `newsletter_subscribers`
   ADD PRIMARY KEY (`id`),
   ADD UNIQUE KEY `email` (`email`),
-  ADD KEY `idx_status` (`status`);
+  ADD KEY `idx_status` (`status`),
+  ADD UNIQUE KEY `uq_newsletter_confirm_token` (`confirm_token`),
+  ADD UNIQUE KEY `uq_newsletter_unsubscribe_token` (`unsubscribe_token`);
+
+--
+-- Indexes for table `system_settings`
+--
+ALTER TABLE `system_settings`
+  ADD PRIMARY KEY (`id`),
+  ADD UNIQUE KEY `uq_system_settings_key` (`setting_key`);
 
 --
 -- Indexes for table `subcategories`
@@ -662,6 +741,12 @@ ALTER TABLE `media`
 --
 ALTER TABLE `newsletter_subscribers`
   MODIFY `id` int(10) UNSIGNED NOT NULL AUTO_INCREMENT;
+
+--
+-- AUTO_INCREMENT for table `system_settings`
+--
+ALTER TABLE `system_settings`
+  MODIFY `id` int(10) UNSIGNED NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=2;
 
 --
 -- AUTO_INCREMENT for table `subcategories`

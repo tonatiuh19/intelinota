@@ -1,5 +1,11 @@
 import { useEffect, useState } from "react";
-import { NavLink, Outlet, useNavigate, useLocation } from "react-router-dom";
+import {
+  NavLink,
+  Outlet,
+  useNavigate,
+  useLocation,
+  Link,
+} from "react-router-dom";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
 import {
   fetchAdminMe,
@@ -7,15 +13,10 @@ import {
   selectAdminUser,
   selectAdminToken,
 } from "@/store/slices/adminAuthSlice";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { SITE_LOGO } from "@/lib/branding";
+import MetaHead from "@/components/MetaHead";
 import { Button } from "@/components/ui/button";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 import {
   LayoutDashboard,
   FileText,
@@ -26,13 +27,59 @@ import {
   ChevronRight,
   Shield,
   Pen,
+  MessageSquare,
+  FolderTree,
+  Mail,
+  Settings,
+  Activity,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { fetchAdminSettings, selectAdminAppVersion } from "@/store/slices/adminSettingsSlice";
 
-const NAV_ITEMS = [
-  { to: "/admin/dashboard", icon: LayoutDashboard, label: "Dashboard" },
-  { to: "/admin/articles", icon: FileText, label: "Artículos" },
-  { to: "/admin/authors", icon: Users, label: "Autores" },
+const ALL_NAV_ITEMS = [
+  {
+    to: "/admin/dashboard",
+    icon: LayoutDashboard,
+    label: "Dashboard",
+    adminOnly: false,
+  },
+  {
+    to: "/admin/articles",
+    icon: FileText,
+    label: "Artículos",
+    adminOnly: false,
+  },
+  { to: "/admin/authors", icon: Users, label: "Autores", adminOnly: true },
+  {
+    to: "/admin/comments",
+    icon: MessageSquare,
+    label: "Comentarios",
+    adminOnly: true,
+  },
+  {
+    to: "/admin/categories",
+    icon: FolderTree,
+    label: "Categorías",
+    adminOnly: true,
+  },
+  {
+    to: "/admin/newsletter",
+    icon: Mail,
+    label: "Newsletter",
+    adminOnly: true,
+  },
+  {
+    to: "/admin/activity",
+    icon: Activity,
+    label: "Actividad",
+    adminOnly: true,
+  },
+  {
+    to: "/admin/settings",
+    icon: Settings,
+    label: "Configuración",
+    adminOnly: true,
+  },
 ];
 
 function AdminGuard({ children }: { children: React.ReactNode }) {
@@ -71,7 +118,14 @@ export default function AdminLayout() {
   const navigate = useNavigate();
   const location = useLocation();
   const user = useAppSelector(selectAdminUser);
+  const appVersion = useAppSelector(selectAdminAppVersion);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+
+  useEffect(() => {
+    if (user?.role === "admin") {
+      dispatch(fetchAdminSettings());
+    }
+  }, [dispatch, user?.role]);
 
   const handleLogout = () => {
     dispatch(logout());
@@ -88,8 +142,17 @@ export default function AdminLayout() {
     : "A";
 
   // Get page title from current route
-  const currentNav = NAV_ITEMS.find((n) => location.pathname.startsWith(n.to));
-  const pageTitle = currentNav?.label ?? "Admin";
+  const navItems = ALL_NAV_ITEMS.filter(
+    (item) => !item.adminOnly || user?.role === "admin",
+  );
+
+  const currentNav = navItems.find((n) => location.pathname.startsWith(n.to));
+  const pageTitle =
+    location.pathname.includes("/profile")
+      ? "Perfil"
+      : location.pathname.includes("/articles/")
+        ? "Editor"
+        : (currentNav?.label ?? "Admin");
 
   const Sidebar = ({ mobile = false }: { mobile?: boolean }) => (
     <div className={cn("flex flex-col h-full", mobile ? "p-4" : "p-6")}>
@@ -97,7 +160,7 @@ export default function AdminLayout() {
       <div className="flex items-center gap-3 mb-8">
         <div className="flex-1 min-w-0">
           <img
-            src="https://disruptinglabs.com/data/intelinota/assets/images/logos/logo_white.png"
+            src={SITE_LOGO}
             alt="INTELINOTA"
             className="h-6 w-auto object-contain"
           />
@@ -119,7 +182,7 @@ export default function AdminLayout() {
 
       {/* Nav */}
       <nav className="flex-1 space-y-1">
-        {NAV_ITEMS.map(({ to, icon: Icon, label }) => (
+        {navItems.map(({ to, icon: Icon, label }) => (
           <NavLink
             key={to}
             to={to}
@@ -141,25 +204,35 @@ export default function AdminLayout() {
 
       {/* User section */}
       <div className="pt-4 border-t border-border mt-4">
-        <div className="flex items-center gap-3 px-2 py-2 rounded-lg">
-          <Avatar className="w-8 h-8 flex-shrink-0">
-            <AvatarFallback className="bg-blue-600/20 text-blue-400 text-xs font-bold">
-              {initials}
-            </AvatarFallback>
-          </Avatar>
-          <div className="flex-1 min-w-0">
-            <div className="text-sm font-medium text-foreground truncate">
-              {user?.name ?? user?.email}
+        <div className="flex items-center gap-1">
+          <Link
+            to="/admin/profile"
+            onClick={() => setSidebarOpen(false)}
+            className="flex items-center gap-3 px-2 py-2 rounded-lg flex-1 min-w-0 hover:bg-accent/60 transition-colors group"
+          >
+            <Avatar className="w-8 h-8 flex-shrink-0">
+              <AvatarImage
+                src={user?.avatar_url ?? undefined}
+                alt={user?.name ?? ""}
+              />
+              <AvatarFallback className="bg-blue-600/20 text-blue-400 text-xs font-bold">
+                {initials}
+              </AvatarFallback>
+            </Avatar>
+            <div className="flex-1 min-w-0">
+              <div className="text-sm font-medium text-foreground truncate group-hover:text-blue-400 transition-colors">
+                {user?.name ?? user?.email}
+              </div>
+              <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                {user?.role === "admin" ? (
+                  <Shield className="w-3 h-3 text-blue-400" />
+                ) : (
+                  <Pen className="w-3 h-3 text-emerald-400" />
+                )}
+                <span className="capitalize">{user?.role}</span>
+              </div>
             </div>
-            <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-              {user?.role === "admin" ? (
-                <Shield className="w-3 h-3 text-blue-400" />
-              ) : (
-                <Pen className="w-3 h-3 text-emerald-400" />
-              )}
-              <span className="capitalize">{user?.role}</span>
-            </div>
-          </div>
+          </Link>
           <Button
             variant="ghost"
             size="icon"
@@ -170,12 +243,23 @@ export default function AdminLayout() {
             <LogOut className="w-4 h-4" />
           </Button>
         </div>
+        {appVersion && (
+          <p className="text-[10px] text-muted-foreground/50 font-mono px-2 pb-2">
+            {appVersion}
+          </p>
+        )}
       </div>
     </div>
   );
 
   return (
     <AdminGuard>
+      <MetaHead
+        title={`Admin — ${pageTitle}`}
+        description="Panel de administración de Intelinota."
+        noIndex
+        includeSiteOrganization={false}
+      />
       <div className="h-screen flex bg-background overflow-hidden">
         {/* Desktop sidebar */}
         <aside className="hidden lg:flex flex-col w-64 border-r border-border bg-card/40 flex-shrink-0 overflow-y-auto">

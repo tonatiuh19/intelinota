@@ -8,6 +8,7 @@ export type { HomeState };
 const initialState: HomeState = {
   featured: [],
   trending: [],
+  mostRead: [],
   articles: [],
   categories: [],
   meta: null,
@@ -56,6 +57,7 @@ const homeSlice = createSlice({
         state.loaded = true;
         state.featured = action.payload.featured;
         state.trending = action.payload.trending;
+        state.mostRead = action.payload.mostRead ?? [];
         state.articles = action.payload.articles;
         state.categories = action.payload.categories;
         state.meta = action.payload.meta;
@@ -76,6 +78,7 @@ export const selectHomeLoaded = (s: RootState) => s.home.loaded;
 export const selectHomeError = (s: RootState) => s.home.error;
 export const selectHomeFeatured = (s: RootState) => s.home.featured;
 export const selectHomeTrending = (s: RootState) => s.home.trending;
+export const selectHomeMostRead = (s: RootState) => s.home.mostRead;
 export const selectHomeArticles = (s: RootState) => s.home.articles;
 export const selectHomeCategories = (s: RootState) => s.home.categories;
 export const selectHomeMeta = (s: RootState) => s.home.meta;

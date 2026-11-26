@@ -14,6 +14,7 @@ const initialState: AdminAuthState = {
   user: null,
   token: localStorage.getItem(TOKEN_KEY),
   loading: false,
+  meLoading: false,
   error: null,
   codeSent: false,
   codeSentEmail: null,
@@ -66,6 +67,33 @@ export const fetchAdminMe = createAsyncThunk(
       return data.data;
     } catch (err: any) {
       return rejectWithValue(err.response?.data?.message ?? "Session expired");
+    }
+  },
+);
+
+export const updateMyProfile = createAsyncThunk(
+  "adminAuth/updateMyProfile",
+  async (
+    payload: {
+      name?: string;
+      avatar_url?: string;
+      bio?: string;
+      twitter_handle?: string;
+      social_links?: object | null;
+    },
+    { getState, rejectWithValue },
+  ) => {
+    const { token } = (getState() as RootState).adminAuth;
+    if (!token) return rejectWithValue("No token");
+    try {
+      const { data } = await axios.put("/api/admin/me/profile", payload, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      return data.data;
+    } catch (err: any) {
+      return rejectWithValue(
+        err.response?.data?.message ?? "Failed to update profile",
+      );
     }
   },
 );
@@ -127,14 +155,24 @@ const adminAuthSlice = createSlice({
 
     // fetchAdminMe
     builder
+      .addCase(fetchAdminMe.pending, (state) => {
+        state.meLoading = true;
+      })
       .addCase(fetchAdminMe.fulfilled, (state, action) => {
+        state.meLoading = false;
         state.user = action.payload;
       })
       .addCase(fetchAdminMe.rejected, (state) => {
+        state.meLoading = false;
         state.user = null;
         state.token = null;
         localStorage.removeItem(TOKEN_KEY);
       });
+
+    // updateMyProfile
+    builder.addCase(updateMyProfile.fulfilled, (state, action) => {
+      state.user = action.payload;
+    });
   },
 });
 
@@ -143,6 +181,7 @@ export const { logout, clearError, resetCodeSent } = adminAuthSlice.actions;
 export const selectAdminUser = (s: RootState) => s.adminAuth.user;
 export const selectAdminToken = (s: RootState) => s.adminAuth.token;
 export const selectAdminAuthLoading = (s: RootState) => s.adminAuth.loading;
+export const selectAdminMeLoading = (s: RootState) => s.adminAuth.meLoading;
 export const selectAdminAuthError = (s: RootState) => s.adminAuth.error;
 export const selectAdminCodeSent = (s: RootState) => s.adminAuth.codeSent;
 export const selectAdminCodeSentEmail = (s: RootState) =>

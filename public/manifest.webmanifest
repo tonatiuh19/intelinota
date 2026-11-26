@@ -1,0 +1,13 @@
+{
+  "name": "INTELINOTA",
+  "short_name": "INTELINOTA",
+  "description": "Noticias de tecnología, deportes y cultura",
+  "lang": "es-MX",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#faf8f4",
+  "theme_color": "#faf8f4",
+  "icons": [
+    { "src": "https://disruptinglabs.com/data/intelinota/assets/images/logos/favicon/favicon.ico", "sizes": "48x48", "type": "image/x-icon" }
+  ]
+}

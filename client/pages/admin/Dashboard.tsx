@@ -5,11 +5,13 @@ import {
   fetchAdminDashboard,
   selectDashboardStats,
   selectDashboardLoading,
+  selectDashboardError,
 } from "@/store/slices/adminDashboardSlice";
 import { selectAdminUser } from "@/store/slices/adminAuthSlice";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import {
   FileText,
   Eye,
@@ -63,6 +65,7 @@ export default function AdminDashboard() {
   const dispatch = useAppDispatch();
   const stats = useAppSelector(selectDashboardStats);
   const loading = useAppSelector(selectDashboardLoading);
+  const error = useAppSelector(selectDashboardError);
   const user = useAppSelector(selectAdminUser);
 
   useEffect(() => {
@@ -137,6 +140,21 @@ export default function AdminDashboard() {
         </Button>
       </div>
 
+      {error && (
+        <Alert variant="destructive">
+          <AlertDescription className="flex flex-wrap items-center justify-between gap-4">
+            <span>{error}</span>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => dispatch(fetchAdminDashboard())}
+            >
+              Reintentar
+            </Button>
+          </AlertDescription>
+        </Alert>
+      )}
+
       {/* Stats grid */}
       <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
         {statCards.map((card) => (
@@ -176,8 +194,9 @@ export default function AdminDashboard() {
               ))
             ) : stats?.top_articles?.length ? (
               stats.top_articles.map((article, i) => (
-                <div
+                <Link
                   key={article.id}
+                  to={`/admin/articles/${article.id}/edit`}
                   className="flex items-center gap-3 px-5 py-3 hover:bg-accent/30 transition-colors group"
                 >
                   <span className="text-xs font-mono text-muted-foreground/50 w-5 text-center flex-shrink-0">
@@ -195,7 +214,7 @@ export default function AdminDashboard() {
                     <Eye className="w-3 h-3" />
                     {article.view_count.toLocaleString()}
                   </div>
-                </div>
+                </Link>
               ))
             ) : (
               <div className="px-5 py-8 text-center text-muted-foreground text-sm">
@@ -262,6 +281,30 @@ export default function AdminDashboard() {
               ))}
             </div>
           </div>
+
+          {stats?.views_by_day?.length ? (
+            <div className="rounded-xl border border-border bg-card/60 p-5 space-y-3">
+              <h2 className="text-sm font-semibold text-foreground">
+                Visitas (30 días)
+              </h2>
+              <div className="flex items-end gap-1 h-24">
+                {stats.views_by_day.slice(-14).map((day) => {
+                  const max = Math.max(
+                    ...stats.views_by_day.slice(-14).map((d) => d.count),
+                    1,
+                  );
+                  return (
+                    <div
+                      key={day.date}
+                      className="flex-1 bg-blue-500/40 rounded-t-sm min-w-[4px]"
+                      style={{ height: `${Math.max(8, (day.count / max) * 100)}%` }}
+                      title={`${day.date}: ${day.count}`}
+                    />
+                  );
+                })}
+              </div>
+            </div>
+          ) : null}
 
           {/* Quick actions */}
           <div className="rounded-xl border border-border bg-card/60 p-5 space-y-3">

@@ -3,10 +3,9 @@ import axios from "axios";
 import type {
   Article,
   ArticlesResponse,
-  ArticleResponse,
-  ArticleBlocksResponse,
   ArticleFullResponse,
   CategoryPageResponse,
+  Category,
 } from "@shared/api";
 import type { RootState, ArticlesState } from "../types";
 
@@ -23,12 +22,12 @@ const initialState: ArticlesState = {
   detailError: null,
   currentBlocks: [],
   blocksLoading: false,
-  trending: [],
-  trendingLoading: false,
-  featured: [],
-  featuredLoading: false,
   currentRelated: [],
+  currentTags: [],
   categoryPageSlug: null,
+  categoryPageSubcategory: null,
+  categoryPagePage: 1,
+  categoryPageCategory: null,
   categoryPageArticles: [],
   categoryPageTrending: [],
   categoryPagePagination: null,
@@ -41,12 +40,22 @@ const initialState: ArticlesState = {
 export const fetchArticles = createAsyncThunk(
   "articles/fetchList",
   async (
-    params: { category?: string; page?: number; limit?: number } | void,
+    params:
+      | {
+          category?: string;
+          search?: string;
+          slugs?: string;
+          page?: number;
+          limit?: number;
+        }
+      | void,
     { rejectWithValue },
   ) => {
     try {
       const p = (params ?? {}) as {
         category?: string;
+        search?: string;
+        slugs?: string;
         page?: number;
         limit?: number;
       };
@@ -57,70 +66,6 @@ export const fetchArticles = createAsyncThunk(
     } catch (err: any) {
       return rejectWithValue(
         err.response?.data?.message ?? "Failed to fetch articles",
-      );
-    }
-  },
-);
-
-export const fetchArticle = createAsyncThunk(
-  "articles/fetchOne",
-  async (slug: string, { rejectWithValue }) => {
-    try {
-      const { data } = await axios.get<ArticleResponse>(
-        `/api/articles/${slug}`,
-      );
-      return data.data;
-    } catch (err: any) {
-      return rejectWithValue(
-        err.response?.data?.message ?? "Article not found",
-      );
-    }
-  },
-);
-
-export const fetchTrending = createAsyncThunk(
-  "articles/fetchTrending",
-  async (_, { rejectWithValue }) => {
-    try {
-      const { data } = await axios.get<ArticlesResponse>("/api/articles", {
-        params: { trending: 1, limit: 5 },
-      });
-      return data.data;
-    } catch (err: any) {
-      return rejectWithValue(
-        err.response?.data?.message ?? "Failed to fetch trending",
-      );
-    }
-  },
-);
-
-export const fetchFeatured = createAsyncThunk(
-  "articles/fetchFeatured",
-  async (_, { rejectWithValue }) => {
-    try {
-      const { data } = await axios.get<ArticlesResponse>("/api/articles", {
-        params: { featured: 1, limit: 6 },
-      });
-      return data.data;
-    } catch (err: any) {
-      return rejectWithValue(
-        err.response?.data?.message ?? "Failed to fetch featured",
-      );
-    }
-  },
-);
-
-export const fetchArticleBlocks = createAsyncThunk(
-  "articles/fetchBlocks",
-  async (slug: string, { rejectWithValue }) => {
-    try {
-      const { data } = await axios.get<ArticleBlocksResponse>(
-        `/api/articles/${slug}/blocks`,
-      );
-      return data.data;
-    } catch (err: any) {
-      return rejectWithValue(
-        err.response?.data?.message ?? "Failed to fetch blocks",
       );
     }
   },
@@ -154,20 +99,41 @@ export const fetchArticleFull = createAsyncThunk(
   },
 );
 
+/** Counts a view (server dedupes per session and ignores bots). */
+export const trackArticleView = createAsyncThunk(
+  "articles/trackView",
+  async (slug: string) => {
+    try {
+      await axios.post(`/api/articles/${encodeURIComponent(slug)}/view`);
+    } catch {
+      // Non-critical — never surface to the reader
+    }
+    return slug;
+  },
+);
+
 /**
  * Fetches category info + articles + trending in one request.
  * Skips re-fetch if the same category slug is already loaded.
  */
 export const fetchCategoryPage = createAsyncThunk(
   "articles/fetchCategoryPage",
-  async (params: { slug: string; page?: number }, { rejectWithValue }) => {
+  async (
+    params: { slug: string; page?: number; subcategory?: string },
+    { rejectWithValue },
+  ) => {
     try {
-      const { slug, page = 1 } = params;
+      const { slug, page = 1, subcategory } = params;
       const { data } = await axios.get<CategoryPageResponse>(
         `/api/category/${slug}`,
-        { params: { page } },
+        {
+          params: {
+            page,
+            ...(subcategory ? { subcategory } : {}),
+          },
+        },
       );
-      return { ...data.data, slug };
+      return { ...data.data, slug, page, subcategory: subcategory ?? null };
     } catch (err: any) {
       return rejectWithValue(
         err.response?.data?.message ?? "Failed to fetch category",
@@ -175,10 +141,14 @@ export const fetchCategoryPage = createAsyncThunk(
     }
   },
   {
-    condition: ({ slug }, { getState }) => {
+    condition: ({ slug, page = 1, subcategory }, { getState }) => {
       const s = (getState() as RootState).articles;
       if (s.categoryPageLoading) return false;
-      return s.categoryPageSlug !== slug;
+      return !(
+        s.categoryPageSlug === slug &&
+        s.categoryPagePage === page &&
+        s.categoryPageSubcategory === (subcategory ?? null)
+      );
     },
   },
 );
@@ -198,6 +168,7 @@ const articlesSlice = createSlice({
       state.currentBlocks = [];
       state.blocksLoading = false;
       state.currentRelated = [];
+      state.currentTags = [];
     },
   },
   extraReducers: (builder) => {
@@ -217,63 +188,6 @@ const articlesSlice = createSlice({
         state.listError = action.payload as string;
       });
 
-    // detail
-    builder
-      .addCase(fetchArticle.pending, (state) => {
-        state.detailLoading = true;
-        state.detailError = null;
-        state.current = null;
-        state.currentBlocks = [];
-      })
-      .addCase(fetchArticle.fulfilled, (state, action) => {
-        state.detailLoading = false;
-        state.current = action.payload;
-      })
-      .addCase(fetchArticle.rejected, (state, action) => {
-        state.detailLoading = false;
-        state.detailError = action.payload as string;
-      });
-
-    // trending
-    builder
-      .addCase(fetchTrending.pending, (state) => {
-        state.trendingLoading = true;
-      })
-      .addCase(fetchTrending.fulfilled, (state, action) => {
-        state.trendingLoading = false;
-        state.trending = action.payload;
-      })
-      .addCase(fetchTrending.rejected, (state) => {
-        state.trendingLoading = false;
-      });
-
-    // featured
-    builder
-      .addCase(fetchFeatured.pending, (state) => {
-        state.featuredLoading = true;
-      })
-      .addCase(fetchFeatured.fulfilled, (state, action) => {
-        state.featuredLoading = false;
-        state.featured = action.payload;
-      })
-      .addCase(fetchFeatured.rejected, (state) => {
-        state.featuredLoading = false;
-      });
-
-    // blocks
-    builder
-      .addCase(fetchArticleBlocks.pending, (state) => {
-        state.blocksLoading = true;
-      })
-      .addCase(fetchArticleBlocks.fulfilled, (state, action) => {
-        state.blocksLoading = false;
-        state.currentBlocks = action.payload;
-      })
-      .addCase(fetchArticleBlocks.rejected, (state) => {
-        state.blocksLoading = false;
-        state.currentBlocks = [];
-      });
-
     // article full (consolidated: article + blocks + related)
     builder
       .addCase(fetchArticleFull.pending, (state) => {
@@ -282,12 +196,14 @@ const articlesSlice = createSlice({
         state.current = null;
         state.currentBlocks = [];
         state.currentRelated = [];
+      state.currentTags = [];
       })
       .addCase(fetchArticleFull.fulfilled, (state, action) => {
         state.detailLoading = false;
         state.current = action.payload.article;
         state.currentBlocks = action.payload.blocks;
         state.currentRelated = action.payload.related;
+        state.currentTags = action.payload.tags ?? [];
       })
       .addCase(fetchArticleFull.rejected, (state, action) => {
         state.detailLoading = false;
@@ -303,6 +219,9 @@ const articlesSlice = createSlice({
       .addCase(fetchCategoryPage.fulfilled, (state, action) => {
         state.categoryPageLoading = false;
         state.categoryPageSlug = action.payload.slug;
+        state.categoryPagePage = action.payload.page;
+        state.categoryPageSubcategory = action.payload.subcategory;
+        state.categoryPageCategory = action.payload.category;
         state.categoryPageArticles = action.payload.articles;
         state.categoryPageTrending = action.payload.trending;
         state.categoryPagePagination = action.payload.pagination;
@@ -330,16 +249,16 @@ export const selectDetailError = (s: RootState) => s.articles.detailError;
 export const selectCurrentBlocks = (s: RootState) => s.articles.currentBlocks;
 export const selectBlocksLoading = (s: RootState) => s.articles.blocksLoading;
 
-export const selectTrending = (s: RootState) => s.articles.trending;
-export const selectFeatured = (s: RootState) => s.articles.featured;
-
 export const selectByCategory = (category: string) => (s: RootState) =>
   s.articles.items.filter((a) => a.category_slug === category);
 
 // Consolidated article detail
 export const selectCurrentRelated = (s: RootState) => s.articles.currentRelated;
+export const selectCurrentTags = (s: RootState) => s.articles.currentTags;
 
 // Consolidated category page
+export const selectCategoryPageCategory = (s: RootState) =>
+  s.articles.categoryPageCategory;
 export const selectCategoryPageArticles = (s: RootState) =>
   s.articles.categoryPageArticles;
 export const selectCategoryPageTrending = (s: RootState) =>

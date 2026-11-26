@@ -21,6 +21,15 @@ export interface Subcategory {
   slug: string;
 }
 
+export interface SocialLinks {
+  facebook?: string;
+  instagram?: string;
+  linkedin?: string;
+  youtube?: string;
+  tiktok?: string;
+  website?: string;
+}
+
 export interface Author {
   id: number;
   name: string;
@@ -28,6 +37,20 @@ export interface Author {
   bio: string | null;
   avatar_url: string | null;
   twitter_handle: string | null;
+  social_links?: SocialLinks | null;
+}
+
+export type ArticleStatus =
+  | "draft"
+  | "in_review"
+  | "published"
+  | "archived"
+  | "scheduled";
+
+export interface Tag {
+  id: number;
+  name: string;
+  slug: string;
 }
 
 export interface Article {
@@ -49,7 +72,7 @@ export interface Article {
   read_time_minutes: number;
   featured: boolean;
   trending: boolean;
-  status: "draft" | "published" | "archived" | "scheduled";
+  status: ArticleStatus;
   published_at: string | null;
   view_count: number;
 }
@@ -162,12 +185,15 @@ export interface HomeMeta {
   og_description: string;
   og_image: string;
   canonical_url: string;
+  app_version: string | null;
 }
 
 export interface HomeData {
   featured: Article[];
   trending: Article[];
   articles: Article[];
+  /** Most viewed articles in the last 30 days */
+  mostRead: Article[];
   categories: Category[];
   meta: HomeMeta;
 }
@@ -185,6 +211,9 @@ export interface AdminUser {
   role: AdminRole;
   author_id: number | null;
   avatar_url: string | null;
+  bio?: string | null;
+  twitter_handle?: string | null;
+  social_links?: SocialLinks | null;
 }
 
 // Extended author with linked user info (for admin management page)
@@ -241,9 +270,11 @@ export interface UpsertArticlePayload {
   read_time_minutes: number;
   featured: boolean;
   trending: boolean;
-  status: "draft" | "published" | "archived" | "scheduled";
+  status: ArticleStatus;
   published_at: string | null;
   blocks?: UpsertBlockPayload[];
+  /** Tag names; created on the fly */
+  tags?: string[];
 }
 
 export interface UpsertBlockPayload {
@@ -260,6 +291,7 @@ export interface UpsertAuthorPayload {
   avatar_url: string | null;
   twitter_handle: string | null;
   email: string | null;
+  social_links?: SocialLinks | null;
   // If provided, creates/links a user account for this author
   user_email?: string;
   user_role?: AdminRole;
@@ -275,10 +307,63 @@ export type AuthVerifyCodeResponse = ApiSuccess<{
 export type DashboardResponse = ApiSuccess<DashboardStats>;
 export type AdminArticlesResponse = PaginatedResponse<AdminArticle>;
 export type AdminArticleResponse = ApiSuccess<
-  AdminArticle & { blocks: ContentBlock[] }
+  AdminArticle & { blocks: ContentBlock[]; tags?: string[] }
 >;
 export type AdminAuthorsResponse = ApiSuccess<AdminAuthor[]>;
 export type AdminAuthorResponse = ApiSuccess<AdminAuthor>;
+export type AdminMeResponse = ApiSuccess<AdminUser>;
+export type AdminFeaturedCountResponse = ApiSuccess<{ count: number }>;
+
+export interface AdminComment {
+  id: number;
+  article_id: number;
+  article_title: string;
+  article_slug: string;
+  author_name: string | null;
+  author_email: string | null;
+  content: string;
+  status: "pending" | "approved" | "spam";
+  created_at: string;
+}
+
+export type AdminCommentsResponse = PaginatedResponse<AdminComment>;
+
+export interface AdminSettingsItem {
+  setting_key: string;
+  setting_value: string | null;
+  setting_type: string;
+  description: string | null;
+  updated_at: string;
+}
+
+export type AdminSettingsResponse = ApiSuccess<AdminSettingsItem[]>;
+
+export interface NewsletterSubscriber {
+  id: number;
+  email: string;
+  name: string | null;
+  source: string | null;
+  status: "pending" | "active" | "unsubscribed";
+  subscribed_at: string;
+  unsubscribed_at: string | null;
+}
+
+export type AdminNewsletterResponse = PaginatedResponse<NewsletterSubscriber>;
+
+export interface MediaVariant {
+  width: number;
+  url: string;
+}
+
+export interface UploadedMedia {
+  id: number;
+  url: string;
+  width?: number;
+  height?: number;
+  variants?: MediaVariant[];
+}
+
+export type AdminUploadResponse = ApiSuccess<UploadedMedia>;
 
 // ── Public page consolidated response types ──────────────────
 
@@ -286,7 +371,37 @@ export interface ArticleFullData {
   article: Article;
   blocks: ContentBlock[];
   related: Article[];
+  tags?: Tag[];
 }
+
+export interface TagPageData {
+  tag: Tag;
+  articles: Article[];
+}
+export type TagPageResponse = ApiSuccess<TagPageData>;
+
+export interface ArticleRevision {
+  id: number;
+  article_id: number;
+  title: string;
+  status: ArticleStatus;
+  created_at: string;
+  user_name: string | null;
+  user_email: string | null;
+}
+export type ArticleRevisionsResponse = ApiSuccess<ArticleRevision[]>;
+
+export interface AuditEntry {
+  id: number;
+  action: string;
+  entity_type: string;
+  entity_id: number | null;
+  details: Record<string, unknown> | null;
+  created_at: string;
+  user_name: string | null;
+  user_email: string | null;
+}
+export type AuditLogResponse = PaginatedResponse<AuditEntry>;
 export type ArticleFullResponse = ApiSuccess<ArticleFullData>;
 
 export interface CategoryPageData {
@@ -301,3 +416,39 @@ export interface CategoryPageData {
   };
 }
 export type CategoryPageResponse = ApiSuccess<CategoryPageData>;
+
+export interface NewsletterSubscribePayload {
+  email: string;
+  source?: string;
+  /** Honeypot — must stay empty */
+  website?: string;
+}
+
+export type NewsletterSubscribeResponse = ApiSuccess<{ message: string }>;
+
+// ── Comments ─────────────────────────────────────────────────
+
+export interface Comment {
+  id: number;
+  article_id: number;
+  parent_id: number | null;
+  author_name: string | null;
+  content: string;
+  created_at: string;
+}
+
+export type CommentsResponse = ApiSuccess<Comment[]>;
+
+export interface CreateCommentPayload {
+  author_name: string;
+  author_email?: string;
+  content: string;
+  parent_id?: number;
+  /** Honeypot — must stay empty */
+  website?: string;
+}
+
+export type CreateCommentResponse = ApiSuccess<{
+  message: string;
+  id: number;
+}>;

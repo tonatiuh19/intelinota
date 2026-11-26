@@ -1,35 +1,61 @@
 import { useParams, Link } from "react-router-dom";
 import {
-  ArrowLeft,
-  Clock,
   Share2,
-  Twitter,
-  Facebook,
   Bookmark,
-  TrendingUp,
-  ExternalLink,
-  Flame,
-  ChevronRight,
+  Link2,
+  MessageCircle,
 } from "lucide-react";
+import { FaXTwitter, FaFacebookF, FaWhatsapp, FaLinkedinIn } from "react-icons/fa6";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
-import { useEffect } from "react";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import ArticleCard from "@/components/ArticleCard";
+import NewsletterForm from "@/components/NewsletterForm";
+import { formatDate, formatRelative } from "@/lib/format";
+import { articleImageSrcSet, IMAGE_SIZES } from "@/lib/images";
+import { cn } from "@/lib/utils";
+import { useEffect, useState } from "react";
+import CommentForm from "@/components/CommentForm";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
 import {
   fetchArticleFull,
+  trackArticleView,
   clearCurrent,
   selectCurrentArticle,
   selectDetailLoading,
   selectDetailError,
   selectCurrentBlocks,
   selectCurrentRelated,
+  selectCurrentTags,
 } from "@/store/slices/articlesSlice";
-import { selectHomeTrending } from "@/store/slices/homeSlice";
+import {
+  fetchAuthor,
+  clearAuthor,
+  selectAuthor,
+} from "@/store/slices/authorsSlice";
+import {
+  fetchComments,
+  clearComments,
+  selectComments,
+  selectCommentsLoading,
+  selectCommentsError,
+  selectCommentsPostMessage,
+} from "@/store/slices/commentsSlice";
+import { selectHomeTrending, fetchHome } from "@/store/slices/homeSlice";
 import MetaHead from "@/components/MetaHead";
-import type { ContentBlock } from "@shared/api";
+import {
+  buildNewsArticleJsonLd,
+  buildBreadcrumbJsonLd,
+  canonicalUrl,
+  mergeJsonLd,
+} from "@/lib/seo";
+import { categoryUrlPath } from "@/lib/categorySlugs";
+import ArticleBlock from "@/components/ArticleBlock";
+import ReadingProgress from "@/components/ReadingProgress";
+import { articleImageUrl } from "@/lib/images";
+import { sharePage, toggleBookmark, isBookmarked } from "@/lib/share";
+import { useToast } from "@/hooks/use-toast";
 
 export default function Article() {
   const { slug } = useParams<{ slug: string }>();
@@ -40,404 +66,458 @@ export default function Article() {
   const error = useAppSelector(selectDetailError);
   const blocks = useAppSelector(selectCurrentBlocks);
   const related = useAppSelector(selectCurrentRelated);
+  const tags = useAppSelector(selectCurrentTags);
   const trending = useAppSelector(selectHomeTrending);
+  const authorProfile = useAppSelector(selectAuthor);
+  const comments = useAppSelector(selectComments);
+  const commentsLoading = useAppSelector(selectCommentsLoading);
+  const commentsError = useAppSelector(selectCommentsError);
+  const commentsPostMessage = useAppSelector(selectCommentsPostMessage);
+  const { toast } = useToast();
+  const [bookmarked, setBookmarked] = useState(false);
 
   useEffect(() => {
-    if (slug) dispatch(fetchArticleFull(slug));
+    if (slug) {
+      dispatch(fetchArticleFull(slug));
+      dispatch(trackArticleView(slug));
+    }
     return () => {
       dispatch(clearCurrent());
+      dispatch(clearAuthor());
+      dispatch(clearComments());
     };
   }, [dispatch, slug]);
 
+  useEffect(() => {
+    if (slug) dispatch(fetchComments(slug));
+  }, [dispatch, slug]);
+
+  useEffect(() => {
+    if (article?.author_slug) {
+      dispatch(fetchAuthor(article.author_slug));
+    }
+  }, [dispatch, article?.author_slug]);
+
+  useEffect(() => {
+    if (slug) setBookmarked(isBookmarked(slug));
+  }, [slug]);
+
+  useEffect(() => {
+    if (trending.length === 0) {
+      dispatch(fetchHome());
+    }
+  }, [dispatch, trending.length]);
+
+  async function handleShare() {
+    if (!article) return;
+    const url = window.location.href;
+    try {
+      const result = await sharePage(article.title, url);
+      toast({
+        title: result === "shared" ? "Compartido" : "Enlace copiado",
+        description:
+          result === "shared"
+            ? "Gracias por compartir esta historia."
+            : "El enlace se copió al portapapeles.",
+      });
+    } catch {
+      toast({
+        title: "No se pudo compartir",
+        variant: "destructive",
+      });
+    }
+  }
+
+  function handleBookmark() {
+    if (!slug) return;
+    const next = toggleBookmark(slug);
+    setBookmarked(next);
+    toast({
+      title: next ? "Guardado" : "Eliminado",
+      description: next
+        ? "Artículo añadido a tus favoritos."
+        : "Artículo eliminado de favoritos.",
+    });
+  }
+
+  function shareTo(network: "x" | "facebook" | "whatsapp" | "linkedin") {
+    if (!article) return;
+    const url = encodeURIComponent(window.location.href);
+    const text = encodeURIComponent(article.title);
+    const targets = {
+      x: `https://x.com/intent/post?url=${url}&text=${text}`,
+      facebook: `https://www.facebook.com/sharer/sharer.php?u=${url}`,
+      whatsapp: `https://wa.me/?text=${text}%20${url}`,
+      linkedin: `https://www.linkedin.com/sharing/share-offsite/?url=${url}`,
+    };
+    window.open(targets[network], "_blank", "noopener,noreferrer,width=640,height=560");
+  }
+
+  async function copyLink() {
+    try {
+      await navigator.clipboard.writeText(window.location.href);
+      toast({ title: "Enlace copiado" });
+    } catch {
+      toast({ title: "No se pudo copiar", variant: "destructive" });
+    }
+  }
+
   if (loading) {
     return (
-      <article className="pb-24">
-        <div className="container px-4 sm:px-6 lg:px-8 py-12 space-y-6 max-w-3xl">
-          <Skeleton className="h-6 w-24 rounded-full" />
-          <Skeleton className="h-20 w-full rounded-xl" />
-          <Skeleton className="h-8 w-3/4 rounded-xl" />
-          <Skeleton className="h-96 w-full rounded-[2.5rem]" />
+      <article className="container px-4 pb-24 pt-10 sm:px-6 lg:px-8">
+        <div className="mx-auto max-w-3xl space-y-5">
+          <Skeleton className="h-4 w-28" />
+          <Skeleton className="h-14 w-full" />
+          <Skeleton className="h-14 w-4/5" />
+          <Skeleton className="h-6 w-full" />
         </div>
+        <Skeleton className="mx-auto mt-10 aspect-[16/9] w-full max-w-5xl" />
       </article>
     );
   }
 
   if (error || !article) {
     return (
-      <article className="pb-24">
-        <div className="container px-4 sm:px-6 lg:px-8 py-24 text-center space-y-4">
-          <h1 className="text-4xl font-black italic uppercase tracking-tighter opacity-30">
-            {error ?? "Artículo no encontrado"}
-          </h1>
-          <Link to="/">
-            <Button variant="outline" className="rounded-full mt-4">
-              Volver al inicio
-            </Button>
-          </Link>
-        </div>
+      <article className="container px-4 py-24 text-center sm:px-6 lg:px-8">
+        <p className="kicker">Error 404</p>
+        <h1 className="mt-3 font-display text-display-lg font-bold">
+          {error ?? "Artículo no encontrado"}
+        </h1>
+        <Button asChild variant="outline" className="mt-8 h-11">
+          <Link to="/">Volver a la portada</Link>
+        </Button>
       </article>
     );
   }
 
-  const publishedDate = article.published_at
-    ? new Date(article.published_at).toLocaleDateString("es-MX", {
-        year: "numeric",
-        month: "long",
-        day: "numeric",
-      })
-    : "";
+  const articleTags = [
+    article.category_name,
+    article.subcategory_name,
+    ...tags.map((t) => t.name),
+  ].filter(Boolean) as string[];
+  const moreFromSection = related.slice(0, 3);
+  const recommended = (trending.length ? trending : related)
+    .filter((a) => a.id !== article.id)
+    .slice(0, 5);
+
+  const shareButtons = [
+    { key: "x" as const, label: "Compartir en X", icon: FaXTwitter },
+    { key: "facebook" as const, label: "Compartir en Facebook", icon: FaFacebookF },
+    { key: "whatsapp" as const, label: "Compartir en WhatsApp", icon: FaWhatsapp },
+    { key: "linkedin" as const, label: "Compartir en LinkedIn", icon: FaLinkedinIn },
+  ];
+
+  const railButton =
+    "inline-flex h-10 w-10 items-center justify-center rounded-full border text-muted-foreground transition-colors hover:border-foreground hover:text-foreground";
 
   return (
-    <article className="pb-24">
+    <article className="pb-24 lg:pb-28">
+      <ReadingProgress />
       <MetaHead
         title={article.title}
         description={article.excerpt ?? undefined}
+        keywords={articleTags.join(", ")}
         ogType="article"
         ogImage={article.image_url ?? undefined}
+        canonical={canonicalUrl(`/articulo/${article.slug}`)}
+        author={article.author_name}
         articlePublishedTime={article.published_at ?? undefined}
+        articleModifiedTime={article.published_at ?? undefined}
         articleAuthor={article.author_name}
         articleSection={article.category_name}
+        articleTags={articleTags}
+        jsonLd={mergeJsonLd(
+          buildNewsArticleJsonLd({
+            headline: article.title,
+            description: article.excerpt ?? article.title,
+            url: `/articulo/${article.slug}`,
+            imageUrl: article.image_url,
+            datePublished: article.published_at,
+            authorName: article.author_name,
+            authorUrl: `/autor/${article.author_slug}`,
+            section: article.category_name,
+            keywords: articleTags,
+          }),
+          buildBreadcrumbJsonLd([
+            { name: "Inicio", path: "/" },
+            { name: article.category_name, path: categoryUrlPath(article.category_slug) },
+            { name: article.title, path: `/articulo/${article.slug}` },
+          ]),
+        )}
       />
-      <div className="container px-4 sm:px-6 lg:px-8 py-12 md:py-20">
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-16">
-          <div className="lg:col-span-8 space-y-8">
-            <Link
-              to="/"
-              className="inline-flex items-center text-xs font-black text-muted-foreground hover:text-primary transition-colors uppercase tracking-[0.2em] mb-4 group italic"
-            >
-              <ArrowLeft className="mr-2 h-4 w-4 group-hover:-translate-x-1 transition-transform" />
-              Volver al Inicio
+
+      {/* ── Header ───────────────────────────────────────────── */}
+      <header className="container px-4 pt-8 sm:px-6 sm:pt-12 lg:px-8">
+        <div className="mx-auto max-w-3xl text-center">
+          <nav aria-label="Ruta" className="flex items-center justify-center gap-2 text-xs">
+            <Link to={categoryUrlPath(article.category_slug)} className="kicker hover:underline">
+              {article.category_name}
             </Link>
-
-            <div className="space-y-6">
-              <div className="flex items-center gap-3">
-                <Badge className="bg-white text-black hover:bg-white font-black tracking-[0.3em] uppercase text-[10px] rounded-full px-4 py-1 italic shadow-lg">
-                  {article.category_name}
-                </Badge>
-                <span className="text-muted-foreground text-sm font-medium opacity-30">
-                  /
+            {article.subcategory_name && (
+              <>
+                <span aria-hidden className="text-muted-foreground">/</span>
+                <span className="kicker !text-muted-foreground">{article.subcategory_name}</span>
+              </>
+            )}
+          </nav>
+          <h1 className="mt-4 font-display text-display-xl font-bold text-balance">
+            {article.title}
+          </h1>
+          {article.excerpt && (
+            <p className="mx-auto mt-5 max-w-2xl font-body text-lg leading-relaxed text-muted-foreground text-pretty sm:text-xl">
+              {article.excerpt}
+            </p>
+          )}
+          <div className="mt-7 flex flex-col items-center justify-center gap-3 border-y py-4 sm:flex-row sm:gap-5">
+            <Link to={`/autor/${article.author_slug}`} className="group flex items-center gap-3">
+              <Avatar className="h-10 w-10">
+                <AvatarImage src={authorProfile?.avatar_url ?? undefined} alt="" />
+                <AvatarFallback className="font-display font-bold">
+                  {article.author_name[0]}
+                </AvatarFallback>
+              </Avatar>
+              <span className="text-left text-sm">
+                <span className="block font-semibold group-hover:underline">
+                  Por {article.author_name}
                 </span>
-                <span className="text-muted-foreground text-[10px] font-black uppercase tracking-[0.3em] italic">
-                  {article.subcategory_name}
-                </span>
-              </div>
-
-              <h1 className="text-3xl sm:text-5xl md:text-7xl font-black italic tracking-tighter leading-[0.85] uppercase text-white drop-shadow-2xl">
-                {article.title}
-              </h1>
-
-              <p className="text-base sm:text-xl md:text-2xl text-muted-foreground leading-relaxed italic font-medium max-w-3xl">
-                {article.excerpt}
-              </p>
-
-              <div className="flex items-center gap-3 pt-4 border-t border-primary/10 text-[10px] text-muted-foreground font-black uppercase tracking-widest">
-                <span>{publishedDate}</span>
-                <span className="w-1 h-1 bg-muted-foreground rounded-full opacity-30" />
-                <Clock className="h-3 w-3" />
-                <span>{article.read_time_minutes} min</span>
-              </div>
+                <time dateTime={article.published_at ?? undefined} className="text-muted-foreground">
+                  {formatDate(article.published_at)} · {article.read_time_minutes} min de lectura
+                </time>
+              </span>
+            </Link>
+            <div className="flex items-center gap-1 sm:ml-auto lg:hidden">
+              <button type="button" onClick={handleShare} aria-label="Compartir" className={railButton}>
+                <Share2 className="h-4 w-4" />
+              </button>
+              <button
+                type="button"
+                onClick={handleBookmark}
+                aria-label={bookmarked ? "Quitar de favoritos" : "Guardar"}
+                aria-pressed={bookmarked}
+                className={cn(railButton, bookmarked && "border-foreground text-foreground")}
+              >
+                <Bookmark className={cn("h-4 w-4", bookmarked && "fill-current")} />
+              </button>
             </div>
           </div>
         </div>
-      </div>
+      </header>
 
-      <div className="container px-4 sm:px-6 lg:px-8 mb-16">
-        <div className="relative aspect-video max-h-[700px] overflow-hidden rounded-[2.5rem] bg-muted border border-primary/5 shadow-2xl shadow-black/50 group">
-          <img
-            src={article.image_url ?? "/placeholder.jpg"}
-            alt={article.title}
-            className="w-full h-full object-cover transition-transform [transition-duration:3000ms] group-hover:scale-105"
-          />
-          <div className="absolute inset-0 bg-gradient-to-t from-black/20 to-transparent" />
-        </div>
-      </div>
+      {/* ── Hero art ─────────────────────────────────────────── */}
+      {article.image_url && (
+        <figure className="container mt-8 px-0 sm:px-6 lg:px-8">
+          <div className="mx-auto aspect-[16/9] max-w-6xl overflow-hidden bg-muted">
+            <img
+              src={articleImageUrl(article.image_url)}
+              srcSet={articleImageSrcSet(article.image_url)}
+              sizes={IMAGE_SIZES.hero}
+              alt={article.excerpt ?? article.title}
+              // @ts-expect-error — valid HTML attribute
+              fetchpriority="high"
+              decoding="async"
+              className="h-full w-full object-cover"
+            />
+          </div>
+        </figure>
+      )}
 
-      {/* Main Content Area */}
-      <div className="container grid grid-cols-1 lg:grid-cols-12 gap-16">
-        <div className="lg:col-span-8 space-y-10">
-          {/* Dynamic content blocks */}
+      {/* ── Body ─────────────────────────────────────────────── */}
+      <div className="container mt-10 grid grid-cols-1 gap-12 px-4 sm:px-6 lg:mt-14 lg:grid-cols-12 lg:px-8">
+        {/* Share rail (desktop) */}
+        <aside className="hidden lg:col-span-1 lg:block" aria-label="Compartir">
+          <div className="sticky top-24 flex flex-col items-center gap-2">
+            {shareButtons.map(({ key, label, icon: Icon }) => (
+              <button key={key} type="button" onClick={() => shareTo(key)} aria-label={label} className={railButton}>
+                <Icon className="h-4 w-4" />
+              </button>
+            ))}
+            <button type="button" onClick={copyLink} aria-label="Copiar enlace" className={railButton}>
+              <Link2 className="h-4 w-4" />
+            </button>
+            <span className="my-1 h-px w-6 bg-border" />
+            <button
+              type="button"
+              onClick={handleBookmark}
+              aria-label={bookmarked ? "Quitar de favoritos" : "Guardar"}
+              aria-pressed={bookmarked}
+              className={cn(railButton, bookmarked && "border-foreground bg-foreground text-background hover:text-background")}
+            >
+              <Bookmark className={cn("h-4 w-4", bookmarked && "fill-current")} />
+            </button>
+            <a href="#comentarios" aria-label="Ir a comentarios" className={railButton}>
+              <MessageCircle className="h-4 w-4" />
+            </a>
+          </div>
+        </aside>
+
+        <div className="min-w-0 lg:col-span-7">
           <div className="space-y-8">
-            {blocks.map((block) => (
-              <ArticleBlock key={block.id} block={block} />
+            {blocks.map((block, i) => (
+              <ArticleBlock key={block.id} block={block} dropCap={i === 0} />
             ))}
           </div>
 
-          <Separator className="my-12" />
+          {tags.length > 0 && (
+            <ul className="mt-12 flex flex-wrap gap-2" aria-label="Temas">
+              {tags.map((t) => (
+                <li key={t.id}>
+                  <Link
+                    to={`/tema/${t.slug}`}
+                    className="inline-flex h-10 items-center rounded-full border px-4 text-sm font-medium transition-colors hover:border-foreground"
+                  >
+                    {t.name}
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          )}
 
-          {/* Author Card */}
-          <div className="flex flex-col sm:flex-row gap-6 items-start bg-muted/30 border border-primary/10 rounded-2xl p-6">
-            <Avatar className="h-16 w-16 ring-2 ring-primary/20 p-0.5 bg-muted flex-shrink-0">
-              <AvatarImage
-                src={`https://api.dicebear.com/7.x/avataaars/svg?seed=${article.author_name}`}
-              />
-              <AvatarFallback>{article.author_name[0]}</AvatarFallback>
+          {/* Author box */}
+          <section className="rule-top mt-12 flex flex-col gap-5 pt-6 sm:flex-row" aria-label="Sobre el autor">
+            <Avatar className="h-16 w-16 shrink-0">
+              <AvatarImage src={authorProfile?.avatar_url ?? undefined} alt="" />
+              <AvatarFallback className="font-display text-xl font-bold">
+                {article.author_name[0]}
+              </AvatarFallback>
             </Avatar>
-            <div className="flex-1 space-y-2">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                <div>
-                  <p className="text-[10px] text-muted-foreground font-black uppercase tracking-widest italic opacity-50">
-                    Escrito por
-                  </p>
-                  <h4 className="font-black italic tracking-tighter uppercase text-xl leading-none">
-                    {article.author_name}
-                  </h4>
-                </div>
-                <div className="flex items-center gap-1">
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="rounded-full hover:bg-primary/10 hover:text-primary h-8 w-8"
-                  >
-                    <Twitter className="h-3.5 w-3.5" />
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="rounded-full hover:bg-primary/10 hover:text-primary h-8 w-8"
-                  >
-                    <Facebook className="h-3.5 w-3.5" />
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="rounded-full hover:bg-primary/10 hover:text-primary h-8 w-8"
-                  >
-                    <Share2 className="h-3.5 w-3.5" />
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="rounded-full hover:bg-primary/10 hover:text-primary h-8 w-8"
-                  >
-                    <Bookmark className="h-3.5 w-3.5" />
-                  </Button>
-                </div>
-              </div>
-              <p className="text-xs text-muted-foreground leading-relaxed">
-                {article.author_name} es periodista de tecnología e innovación
-                en INTELINOTA.
-              </p>{" "}
-              <Link to={`/autor/${article.author_slug}`}>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="mt-1 px-0 font-bold uppercase tracking-tighter italic text-xs hover:text-primary hover:bg-transparent"
-                >
-                  Ver todas las historias{" "}
-                  <ExternalLink className="ml-1.5 h-3 w-3" />
-                </Button>
+            <div className="space-y-2">
+              <p className="kicker !text-muted-foreground">Sobre el autor</p>
+              <Link to={`/autor/${article.author_slug}`} className="font-display text-xl font-bold hover:underline">
+                {article.author_name}
               </Link>
+              <p className="font-body text-[15px] leading-relaxed text-muted-foreground">
+                {authorProfile?.bio ?? `${article.author_name} escribe para INTELINOTA.`}
+              </p>
             </div>
-          </div>
+          </section>
 
-          <Separator className="my-12" />
+          {/* End-of-article newsletter */}
+          <section className="mt-12 bg-foreground p-6 text-background sm:p-8">
+            <p className="kicker !text-background/70">Boletín diario</p>
+            <p className="mt-2 font-display text-2xl font-bold leading-tight">
+              ¿Te gustó esta historia? Recibe las mejores cada mañana.
+            </p>
+            <NewsletterForm variant="inline" source="article_end" className="mt-5 max-w-md" />
+          </section>
 
-          {/* Comments Section (Placeholder) */}
-          <div className="space-y-8">
-            <div className="flex items-center justify-between">
-              <h3 className="text-2xl font-black italic uppercase tracking-tighter">
-                Comentarios
-              </h3>
-            </div>
+          {/* Comments */}
+          <section id="comentarios" className="mt-14 scroll-mt-24 space-y-6" aria-labelledby="comments-h">
+            <h2 id="comments-h" className="rule-top pt-3 font-display text-2xl font-bold">
+              Comentarios
+              {!commentsLoading && comments.length > 0 && (
+                <span className="ml-2 text-base font-normal text-muted-foreground">
+                  ({comments.length})
+                </span>
+              )}
+            </h2>
 
-            <div className="bg-muted/50 p-6 rounded-2xl border border-primary/5">
-              <div className="flex gap-4">
-                <Avatar className="h-10 w-10">
-                  <AvatarImage src="https://api.dicebear.com/7.x/avataaars/svg?seed=user1" />
-                  <AvatarFallback>U</AvatarFallback>
-                </Avatar>
-                <div className="flex-1 space-y-2">
-                  <textarea
-                    placeholder="Comparte tu opinión sobre esta historia..."
-                    className="w-full bg-transparent border-none focus:ring-0 text-sm resize-none min-h-[100px] placeholder:text-muted-foreground/50"
-                  />
-                  <div className="flex justify-end pt-2 border-t border-primary/10">
-                    <Button
-                      size="sm"
-                      className="font-bold uppercase tracking-tighter italic"
-                    >
-                      Publicar comentario
-                    </Button>
-                  </div>
-                </div>
+            {commentsPostMessage && (
+              <Alert>
+                <AlertDescription>{commentsPostMessage}</AlertDescription>
+              </Alert>
+            )}
+            {commentsError && (
+              <Alert variant="destructive">
+                <AlertDescription>{commentsError}</AlertDescription>
+              </Alert>
+            )}
+
+            {commentsLoading ? (
+              <div className="space-y-3">
+                <Skeleton className="h-16 w-full" />
+                <Skeleton className="h-16 w-full" />
               </div>
-            </div>
-          </div>
+            ) : comments.length === 0 ? (
+              <p className="font-body text-muted-foreground">Sé el primero en comentar esta historia.</p>
+            ) : (
+              <ul className="divide-y">
+                {comments.map((comment) => (
+                  <li key={comment.id} className={cn("py-5", comment.parent_id && "ml-6 border-l pl-5")}>
+                    <div className="flex items-center gap-3">
+                      <span className="flex h-8 w-8 items-center justify-center rounded-full bg-muted font-display text-sm font-bold">
+                        {comment.author_name?.[0]?.toUpperCase() ?? "?"}
+                      </span>
+                      <span className="text-sm font-semibold">{comment.author_name}</span>
+                      <time dateTime={comment.created_at} className="text-xs text-muted-foreground">
+                        {formatRelative(comment.created_at)}
+                      </time>
+                    </div>
+                    <p className="mt-2 whitespace-pre-wrap pl-11 font-body text-[15px] leading-relaxed">
+                      {comment.content}
+                    </p>
+                  </li>
+                ))}
+              </ul>
+            )}
+
+            {slug && <CommentForm slug={slug} />}
+          </section>
         </div>
 
-        {/* Article Sidebar */}
-        <aside className="lg:col-span-4 space-y-10">
-          {/* Recommended */}
+        {/* Sidebar */}
+        <aside className="space-y-10 lg:col-span-4 lg:border-l lg:pl-8">
           <div className="sticky top-24 space-y-10">
-            <div className="bg-muted/30 rounded-2xl border border-primary/5 overflow-hidden">
-              <div className="flex items-center gap-2 text-primary px-6 pt-6 pb-4 border-b border-primary/5">
-                <TrendingUp className="h-4 w-4" />
-                <h3 className="text-sm font-black italic uppercase tracking-widest">
-                  Recomendado para ti
-                </h3>
-              </div>
-              <div className="divide-y divide-primary/5">
-                {related.slice(0, 6).map((art, idx) => (
-                  <Link
-                    key={art.id}
-                    to={`/articulo/${art.slug}`}
-                    className="group flex gap-4 p-4 hover:bg-muted/50 transition-colors"
-                  >
-                    <div className="relative shrink-0 w-20 h-20 rounded-xl overflow-hidden bg-muted">
-                      {art.image_url ? (
-                        <img
-                          src={art.image_url}
-                          alt={art.title}
-                          className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110"
-                          loading="lazy"
-                          onError={(e) => {
-                            e.currentTarget.style.display = "none";
-                          }}
-                        />
-                      ) : (
-                        <div className="w-full h-full bg-gradient-to-br from-primary/20 to-primary/5 flex items-center justify-center">
-                          <span className="text-2xl font-black text-primary/30">
-                            {idx + 1}
-                          </span>
-                        </div>
-                      )}
-                      <div className="absolute inset-0 bg-gradient-to-t from-black/40 to-transparent" />
-                    </div>
-                    <div className="flex-1 min-w-0 space-y-1 py-1">
-                      <span className="text-[9px] font-black text-primary uppercase tracking-[0.2em]">
-                        {art.category_name}
-                      </span>
-                      <h4 className="text-xs font-bold leading-snug uppercase tracking-tight line-clamp-3 group-hover:text-primary transition-colors">
-                        {art.title}
-                      </h4>
-                      <p className="text-[10px] text-muted-foreground">
-                        {art.read_time_minutes} min de lectura
-                      </p>
-                    </div>
-                  </Link>
-                ))}
-              </div>
-            </div>
-
-            {/* Trending */}
-            {trending.length > 0 && (
-              <div className="bg-muted/30 rounded-2xl border border-primary/5 overflow-hidden">
-                <div className="flex items-center gap-2 text-orange-400 px-6 pt-6 pb-4 border-b border-primary/5">
-                  <Flame className="h-4 w-4" />
-                  <h3 className="text-sm font-black italic uppercase tracking-widest">
-                    Lo más leído
-                  </h3>
+            {recommended.length > 0 && (
+              <section aria-labelledby="rec-h">
+                <h2 id="rec-h" className="rule-top mb-1 pt-3 font-display text-xl font-bold">
+                  Recomendado
+                </h2>
+                <div className="divide-y">
+                  {recommended.map((a) => (
+                    <ArticleCard key={a.id} article={a} variant="compact" />
+                  ))}
                 </div>
-                <div className="divide-y divide-primary/5">
-                  {trending
-                    .filter((a) => a.slug !== slug)
-                    .slice(0, 5)
-                    .map((art, idx) => (
-                      <Link
-                        key={art.id}
-                        to={`/articulo/${art.slug}`}
-                        className="group flex items-start gap-4 p-4 hover:bg-muted/50 transition-colors"
-                      >
-                        <span className="shrink-0 text-3xl font-black italic text-muted-foreground/20 leading-none pt-0.5 w-7 text-right">
-                          {idx + 1}
-                        </span>
-                        <div className="flex-1 min-w-0 space-y-1">
-                          <span className="text-[9px] font-black text-primary uppercase tracking-[0.2em]">
-                            {art.category_name}
-                          </span>
-                          <h4 className="text-xs font-bold leading-snug uppercase tracking-tight line-clamp-2 group-hover:text-primary transition-colors">
-                            {art.title}
-                          </h4>
-                          <div className="flex items-center gap-1 text-[10px] text-muted-foreground">
-                            <Clock className="h-2.5 w-2.5" />
-                            {art.read_time_minutes} min
-                            {art.view_count > 0 && (
-                              <>
-                                <span className="opacity-30">·</span>
-                                <span>
-                                  {art.view_count.toLocaleString()} vistas
-                                </span>
-                              </>
-                            )}
-                          </div>
-                        </div>
-                        <ChevronRight className="shrink-0 h-3.5 w-3.5 text-muted-foreground/30 mt-1 group-hover:text-primary transition-colors" />
-                      </Link>
-                    ))}
-                </div>
-              </div>
+              </section>
             )}
           </div>
         </aside>
       </div>
+
+      {/* More from section */}
+      {moreFromSection.length > 0 && (
+        <section className="container mt-20 px-4 sm:px-6 lg:px-8" aria-labelledby="more-h">
+          <div className="rule-top mb-6 flex items-baseline justify-between pt-3">
+            <h2 id="more-h" className="font-display text-2xl font-bold">
+              Más de {article.category_name}
+            </h2>
+            <Link to={categoryUrlPath(article.category_slug)} className="text-sm font-semibold text-muted-foreground hover:text-foreground">
+              Ver todo →
+            </Link>
+          </div>
+          <div className="grid grid-cols-1 gap-8 sm:grid-cols-2 lg:grid-cols-3">
+            {moreFromSection.map((a) => (
+              <ArticleCard key={a.id} article={a} variant="grid" />
+            ))}
+          </div>
+        </section>
+      )}
+
+      {/* Mobile share bar */}
+      <div className="fixed inset-x-0 bottom-0 z-40 border-t bg-background/95 backdrop-blur lg:hidden" style={{ paddingBottom: "env(safe-area-inset-bottom)" }}>
+        <div className="flex h-14 items-center justify-around px-2">
+          <button type="button" onClick={() => shareTo("whatsapp")} aria-label="Compartir en WhatsApp" className="inline-flex h-11 w-11 items-center justify-center">
+            <FaWhatsapp className="h-5 w-5" />
+          </button>
+          <button type="button" onClick={() => shareTo("x")} aria-label="Compartir en X" className="inline-flex h-11 w-11 items-center justify-center">
+            <FaXTwitter className="h-5 w-5" />
+          </button>
+          <button type="button" onClick={handleShare} aria-label="Más opciones para compartir" className="inline-flex h-11 w-11 items-center justify-center">
+            <Share2 className="h-5 w-5" />
+          </button>
+          <a href="#comentarios" aria-label="Comentarios" className="inline-flex h-11 w-11 items-center justify-center">
+            <MessageCircle className="h-5 w-5" />
+          </a>
+          <button
+            type="button"
+            onClick={handleBookmark}
+            aria-label={bookmarked ? "Quitar de favoritos" : "Guardar"}
+            aria-pressed={bookmarked}
+            className="inline-flex h-11 w-11 items-center justify-center"
+          >
+            <Bookmark className={cn("h-5 w-5", bookmarked && "fill-current text-brand")} />
+          </button>
+        </div>
+      </div>
     </article>
   );
-}
-
-// ── Article block renderer ────────────────────────────────────
-function ArticleBlock({ block }: { block: ContentBlock }) {
-  const data = block.data as Record<string, string>;
-  switch (block.type) {
-    case "html":
-      return (
-        <div
-          className="article-content max-w-none"
-          dangerouslySetInnerHTML={{ __html: data.html ?? "" }}
-        />
-      );
-    case "image":
-      return data.url ? (
-        <figure className="space-y-3">
-          <img
-            src={data.url}
-            alt={data.alt ?? ""}
-            className="rounded-2xl w-full object-cover border border-primary/10 shadow-2xl"
-            onError={(e) => (e.currentTarget.style.display = "none")}
-          />
-          {(data.caption || data.credit) && (
-            <figcaption className="text-xs text-muted-foreground text-center italic">
-              {data.caption}
-              {data.credit && (
-                <span className="ml-2 opacity-60">— {data.credit}</span>
-              )}
-            </figcaption>
-          )}
-        </figure>
-      ) : null;
-    case "youtube":
-      return data.video_id ? (
-        <figure className="space-y-3">
-          <div className="aspect-video rounded-2xl overflow-hidden bg-black/40 border border-primary/10">
-            <iframe
-              src={`https://www.youtube-nocookie.com/embed/${data.video_id}`}
-              className="w-full h-full"
-              allowFullScreen
-              title={data.caption ?? "Video"}
-            />
-          </div>
-          {data.caption && (
-            <figcaption className="text-xs text-muted-foreground text-center italic">
-              {data.caption}
-            </figcaption>
-          )}
-        </figure>
-      ) : null;
-    case "quote":
-      return (
-        <blockquote className="border-l-4 border-primary pl-6 py-4 my-4 bg-muted/30 rounded-r-xl pr-6">
-          <p className="italic text-xl font-black tracking-tighter uppercase leading-tight text-foreground">
-            &ldquo;{data.text}&rdquo;
-          </p>
-          {data.attribution && (
-            <footer className="text-xs text-muted-foreground mt-3 font-bold uppercase tracking-widest">
-              — {data.attribution}
-            </footer>
-          )}
-        </blockquote>
-      );
-    case "divider":
-      return <hr className="border-primary/10 my-4" />;
-    default:
-      return null;
-  }
 }
