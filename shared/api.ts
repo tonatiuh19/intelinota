@@ -19,6 +19,28 @@ export interface Subcategory {
   category_id: number;
   name: string;
   slug: string;
+  sort_order?: number;
+}
+
+/** Admin categories list item (GET /api/admin/categories). */
+export interface AdminSubcategory extends Subcategory {
+  sort_order: number;
+  article_count: number;
+}
+
+export interface AdminCategory extends Omit<Category, "subcategories"> {
+  updated_at: string;
+  published_count: number;
+  draft_count: number;
+  article_count: number;
+  subcategories: AdminSubcategory[];
+}
+
+export interface CategoryWritePayload {
+  name: string;
+  slug: string;
+  description: string | null;
+  is_active: boolean;
 }
 
 export interface SocialLinks {
@@ -425,10 +447,17 @@ export interface NewsletterSubscriber {
   source: string | null;
   status: "pending" | "active" | "unsubscribed";
   subscribed_at: string;
+  confirmed_at?: string | null;
   unsubscribed_at: string | null;
 }
 
 export type AdminNewsletterResponse = PaginatedResponse<NewsletterSubscriber>;
+
+export interface NewsletterStats {
+  counts: { active: number; pending: number; unsubscribed: number; new_7d: number; total: number };
+  daily: Array<{ date: string; count: number }>;
+  sources: Array<{ source: string; count: number }>;
+}
 
 export interface MediaVariant {
   width: number;

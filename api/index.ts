@@ -27,6 +27,7 @@ import { processAndStoreImage, isBlobConfigured } from "./_lib/media.js";
 import { buildSitemap, buildNewsSitemap, buildRss } from "./_lib/feeds.js";
 import { setArticleTags, getArticleTags, saveRevision, audit, slugify } from "./_lib/newsroom.js";
 import { scoreComment } from "./_lib/moderation.js";
+import { normalizeTaxonomySlug, validateReorder, validateSetting, csvRow, fillDailySeries } from "./_lib/taxonomy.js";
 import {
   notifyUsers,
   getAdminUserIds,
@@ -954,7 +955,7 @@ const handleGetHome: RequestHandler = async (_req, res) => {
          ORDER BY sort_order ASC`,
       ),
       getPool().query<RowDataPacket[]>(
-        `SELECT id, category_id, name, slug FROM subcategories ORDER BY name ASC`,
+        `SELECT id, category_id, name, slug FROM subcategories ORDER BY sort_order ASC, name ASC`,
       ),
       getSystemSetting("app_version"),
       getPool().query<RowDataPacket[]>(
@@ -1028,7 +1029,7 @@ const handleGetCategories: RequestHandler = async (_req, res) => {
        ORDER BY sort_order ASC`,
     );
     const [subcategories] = await getPool().query<RowDataPacket[]>(
-      "SELECT id, category_id, name, slug FROM subcategories ORDER BY name ASC",
+      "SELECT id, category_id, name, slug FROM subcategories ORDER BY sort_order ASC, name ASC",
     );
 
     const result = (categories as RowDataPacket[]).map((cat) => ({
@@ -1240,7 +1241,7 @@ const handleGetCategoryPage: RequestHandler = async (req, res) => {
 
     const category = (categoryRows as RowDataPacket[])[0];
     const [subcategoryRows] = await getPool().query<RowDataPacket[]>(
-      "SELECT id, category_id, name, slug FROM subcategories WHERE category_id = ? ORDER BY name ASC",
+      "SELECT id, category_id, name, slug FROM subcategories WHERE category_id = ? ORDER BY sort_order ASC, name ASC",
       [category.id],
     );
 
@@ -3735,158 +3736,558 @@ const handleAdminPatchComment: RequestHandler = async (req, res) => {
   }
 };
 
+// ---------------------------------------------------------------------
+// Admin: categories & subcategories (admin-only, audited)
+// ---------------------------------------------------------------------
+
+function parseId(v: unknown): number | null {
+  const n = Number(v);
+  return Number.isInteger(n) && n > 0 ? n : null;
+}
+
 /**
  * GET /api/admin/categories
+ * Categories (sort_order) with nested subcategories and article counts.
  */
 const handleAdminGetCategories: RequestHandler = async (_req, res) => {
   try {
-    const [categories] = await getPool().query<RowDataPacket[]>(
-      `SELECT id, name, slug, description, is_active, sort_order
-       FROM categories ORDER BY sort_order ASC, name ASC`,
-    );
-    const [subcategories] = await getPool().query<RowDataPacket[]>(
-      "SELECT id, category_id, name, slug FROM subcategories ORDER BY name ASC",
-    );
-    const data = (categories as RowDataPacket[]).map((cat) => ({
-      ...cat,
-      is_active: Boolean(cat.is_active),
-      subcategories: (subcategories as RowDataPacket[]).filter(
-        (sc) => sc.category_id === cat.id,
+    const [[categories], [subcategories], [catCounts], [subCounts]] = await Promise.all([
+      getPool().query<RowDataPacket[]>(
+        `SELECT id, name, slug, description, is_active, sort_order, updated_at
+         FROM categories ORDER BY sort_order ASC, name ASC`,
       ),
-    }));
+      getPool().query<RowDataPacket[]>(
+        "SELECT id, category_id, name, slug, sort_order FROM subcategories ORDER BY sort_order ASC, name ASC",
+      ),
+      getPool().query<RowDataPacket[]>(
+        `SELECT category_id,
+                SUM(status = 'published') AS published,
+                SUM(status <> 'published') AS other,
+                COUNT(*) AS total
+         FROM articles GROUP BY category_id`,
+      ),
+      getPool().query<RowDataPacket[]>(
+        `SELECT subcategory_id, COUNT(*) AS total
+         FROM articles WHERE subcategory_id IS NOT NULL GROUP BY subcategory_id`,
+      ),
+    ]);
+    const cc = new Map((catCounts as RowDataPacket[]).map((r) => [Number(r.category_id), r]));
+    const sc = new Map((subCounts as RowDataPacket[]).map((r) => [Number(r.subcategory_id), Number(r.total)]));
+    const data = (categories as RowDataPacket[]).map((cat) => {
+      const c = cc.get(Number(cat.id));
+      return {
+        ...cat,
+        is_active: Boolean(cat.is_active),
+        published_count: Number(c?.published ?? 0),
+        draft_count: Number(c?.other ?? 0),
+        article_count: Number(c?.total ?? 0),
+        subcategories: (subcategories as RowDataPacket[])
+          .filter((s) => s.category_id === cat.id)
+          .map((s) => ({ ...s, article_count: sc.get(Number(s.id)) ?? 0 })),
+      };
+    });
     res.json({ success: true, data });
   } catch (error) {
-    res
-      .status(500)
-      .json({ success: false, message: "Failed to fetch categories" });
+    res.status(500).json({ success: false, message: "Failed to fetch categories", ...devError(error) });
   }
 };
 
-/**
- * PUT /api/admin/categories/:id
- */
+/** GET /api/admin/categories/slug-available?slug=&exclude_id= */
+const handleAdminCategorySlugAvailable: RequestHandler = async (req, res) => {
+  try {
+    const slug = normalizeTaxonomySlug(String(req.query.slug ?? ""), "");
+    if (!slug) return res.json({ success: true, data: { slug: "", available: false } });
+    const exclude = parseId(req.query.exclude_id) ?? 0;
+    const [rows] = await getPool().query<RowDataPacket[]>(
+      "SELECT id FROM categories WHERE slug = ? AND id <> ? LIMIT 1",
+      [slug, exclude],
+    );
+    res.json({ success: true, data: { slug, available: !rows.length } });
+  } catch (error) {
+    res.status(500).json({ success: false, message: "Failed to check slug" });
+  }
+};
+
+/** POST /api/admin/categories { name, slug?, description?, is_active? } */
+const handleAdminCreateCategory: RequestHandler = async (req, res) => {
+  try {
+    const name = sanitizePlainText(req.body?.name, 100).trim();
+    const slug = normalizeTaxonomySlug(req.body?.slug, name);
+    if (!name || !slug) return res.status(400).json({ success: false, message: "Nombre y slug válidos son obligatorios" });
+    const description = req.body?.description ? sanitizePlainText(req.body.description, 1000) : null;
+    const isActive = req.body?.is_active === false ? 0 : 1;
+    const [result] = await getPool().query<ResultSetHeader>(
+      `INSERT INTO categories (name, slug, description, is_active, sort_order)
+       SELECT ?, ?, ?, ?, COALESCE(MAX(sort_order), 0) + 1 FROM categories`,
+      [name, slug, description, isActive],
+    );
+    await audit(getPool(), { ...auditFrom(req), action: "category.create", entityType: "category", entityId: result.insertId, details: { name, slug } });
+    res.status(201).json({ success: true, data: { id: result.insertId, slug } });
+  } catch (error: any) {
+    if (error?.code === "ER_DUP_ENTRY") return res.status(409).json({ success: false, message: "Ese slug ya existe" });
+    res.status(500).json({ success: false, message: "Failed to create category", ...devError(error) });
+  }
+};
+
+/** PUT /api/admin/categories/:id { name?, slug?, description?, is_active?, sort_order? } */
 const handleAdminUpdateCategory: RequestHandler = async (req, res) => {
   try {
-    const id = parseInt(req.params.id as string);
-    if (isNaN(id))
-      return res.status(400).json({ success: false, message: "Invalid id" });
-
-    const body = req.body as {
-      name?: string;
-      slug?: string;
-      description?: string;
-      is_active?: boolean;
-      sort_order?: number;
-    };
+    const id = parseId(req.params.id);
+    if (!id) return res.status(400).json({ success: false, message: "Invalid id" });
+    const body = req.body ?? {};
+    const [prevRows] = await getPool().query<RowDataPacket[]>(
+      "SELECT id, name, slug, is_active FROM categories WHERE id = ? LIMIT 1",
+      [id],
+    );
+    const prev = prevRows[0];
+    if (!prev) return res.status(404).json({ success: false, message: "Category not found" });
 
     const sets: string[] = [];
     const vals: (string | number | null)[] = [];
     if (body.name !== undefined) {
+      const name = sanitizePlainText(body.name, 100).trim();
+      if (!name) return res.status(400).json({ success: false, message: "Nombre obligatorio" });
       sets.push("name = ?");
-      vals.push(body.name);
+      vals.push(name);
     }
     if (body.slug !== undefined) {
+      const slug = normalizeTaxonomySlug(body.slug, "");
+      if (!slug) return res.status(400).json({ success: false, message: "Slug inválido" });
       sets.push("slug = ?");
-      vals.push(body.slug);
+      vals.push(slug);
     }
     if (body.description !== undefined) {
       sets.push("description = ?");
-      vals.push(body.description ?? null);
+      vals.push(body.description ? sanitizePlainText(body.description, 1000) : null);
     }
     if (body.is_active !== undefined) {
       sets.push("is_active = ?");
       vals.push(body.is_active ? 1 : 0);
     }
     if (body.sort_order !== undefined) {
+      const so = Number(body.sort_order);
+      if (!Number.isInteger(so) || so < 0 || so > 65535) return res.status(400).json({ success: false, message: "Orden inválido" });
       sets.push("sort_order = ?");
-      vals.push(body.sort_order);
+      vals.push(so);
     }
+    if (!sets.length) return res.status(400).json({ success: false, message: "No fields to update" });
 
-    if (!sets.length) {
-      return res.status(400).json({ success: false, message: "No fields to update" });
-    }
-
-    const [result] = await getPool().query<ResultSetHeader>(
-      `UPDATE categories SET ${sets.join(", ")} WHERE id = ?`,
-      [...vals, id],
-    );
-    if (!result.affectedRows) {
-      return res
-        .status(404)
-        .json({ success: false, message: "Category not found" });
-    }
+    await getPool().query<ResultSetHeader>(`UPDATE categories SET ${sets.join(", ")} WHERE id = ?`, [...vals, id]);
+    await audit(getPool(), {
+      ...auditFrom(req),
+      action: "category.update",
+      entityType: "category",
+      entityId: id,
+      details: { fields: Object.keys(body), old_slug: prev.slug, ...(body.slug !== undefined ? { new_slug: vals[sets.indexOf("slug = ?")] } : {}) },
+    });
     res.json({ success: true, data: { id } });
   } catch (error: any) {
-    if (error?.code === "ER_DUP_ENTRY") {
-      return res
-        .status(409)
-        .json({ success: false, message: "Slug already exists" });
-    }
-    res
-      .status(500)
-      .json({ success: false, message: "Failed to update category" });
+    if (error?.code === "ER_DUP_ENTRY") return res.status(409).json({ success: false, message: "Ese slug ya existe" });
+    res.status(500).json({ success: false, message: "Failed to update category", ...devError(error) });
   }
 };
 
 /**
- * GET /api/admin/newsletter/subscribers
+ * DELETE /api/admin/categories/:id?move_to=<categoryId>
+ * If the category has articles, move_to is required; articles move to that
+ * category (subcategory cleared). Subcategories are deleted with it.
  */
-const handleAdminGetNewsletterSubscribers: RequestHandler = async (
-  req,
-  res,
-) => {
+const handleAdminDeleteCategory: RequestHandler = async (req, res) => {
+  const id = parseId(req.params.id);
+  if (!id) return res.status(400).json({ success: false, message: "Invalid id" });
+  const moveTo = parseId(req.query.move_to);
+  const conn = await getPool().getConnection();
   try {
-    const page = Math.max(1, parseInt(String(req.query.page || "1")));
-    const limit = Math.min(
-      100,
-      Math.max(1, parseInt(String(req.query.limit || "20"))),
-    );
-    const offset = (page - 1) * limit;
-    const status = req.query.status ? String(req.query.status) : null;
-
-    const conditions: string[] = [];
-    const params: string[] = [];
-    if (status) {
-      conditions.push("status = ?");
-      params.push(status);
+    await conn.beginTransaction();
+    const [cats] = await conn.query<RowDataPacket[]>("SELECT id, slug FROM categories WHERE id = ? FOR UPDATE", [id]);
+    if (!cats.length) {
+      await conn.rollback();
+      return res.status(404).json({ success: false, message: "Category not found" });
     }
-    const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
+    const [cnt] = await conn.query<RowDataPacket[]>("SELECT COUNT(*) AS n FROM articles WHERE category_id = ?", [id]);
+    const n = Number(cnt[0]?.n ?? 0);
+    let moved = 0;
+    if (n > 0) {
+      if (!moveTo || moveTo === id) {
+        await conn.rollback();
+        return res.status(409).json({ success: false, message: "La sección tiene artículos: elige a dónde moverlos", data: { article_count: n } });
+      }
+      const [target] = await conn.query<RowDataPacket[]>("SELECT id FROM categories WHERE id = ? LIMIT 1", [moveTo]);
+      if (!target.length) {
+        await conn.rollback();
+        return res.status(400).json({ success: false, message: "Sección destino no existe" });
+      }
+      const [r] = await conn.query<ResultSetHeader>(
+        "UPDATE articles SET category_id = ?, subcategory_id = NULL WHERE category_id = ?",
+        [moveTo, id],
+      );
+      moved = r.affectedRows;
+    }
+    await conn.query("DELETE FROM subcategories WHERE category_id = ?", [id]);
+    await conn.query("DELETE FROM categories WHERE id = ?", [id]);
+    await conn.commit();
+    await audit(getPool(), { ...auditFrom(req), action: "category.delete", entityType: "category", entityId: id, details: { slug: cats[0].slug, moved_to: moveTo, moved } });
+    res.json({ success: true, data: { id, moved } });
+  } catch (error) {
+    await conn.rollback().catch(() => undefined);
+    res.status(500).json({ success: false, message: "Failed to delete category", ...devError(error) });
+  } finally {
+    conn.release();
+  }
+};
 
+/** PATCH /api/admin/categories/reorder { ids: number[] } */
+const handleAdminReorderCategories: RequestHandler = async (req, res) => {
+  const conn = await getPool().getConnection();
+  try {
+    await conn.beginTransaction();
+    const [rows] = await conn.query<RowDataPacket[]>("SELECT id FROM categories FOR UPDATE");
+    const err = validateReorder(req.body?.ids, rows.map((r) => Number(r.id)));
+    if (err) {
+      await conn.rollback();
+      return res.status(400).json({ success: false, message: err });
+    }
+    const ids = (req.body.ids as number[]).map(Number);
+    for (let i = 0; i < ids.length; i++) {
+      await conn.query("UPDATE categories SET sort_order = ? WHERE id = ?", [i + 1, ids[i]]);
+    }
+    await conn.commit();
+    await audit(getPool(), { ...auditFrom(req), action: "category.reorder", entityType: "category", details: { ids } });
+    res.json({ success: true, data: { ids } });
+  } catch (error) {
+    await conn.rollback().catch(() => undefined);
+    res.status(500).json({ success: false, message: "Failed to reorder categories", ...devError(error) });
+  } finally {
+    conn.release();
+  }
+};
+
+/** POST /api/admin/categories/:id/subcategories { name, slug? } */
+const handleAdminCreateSubcategory: RequestHandler = async (req, res) => {
+  try {
+    const categoryId = parseId(req.params.id);
+    if (!categoryId) return res.status(400).json({ success: false, message: "Invalid id" });
+    const name = sanitizePlainText(req.body?.name, 100).trim();
+    const slug = normalizeTaxonomySlug(req.body?.slug, name);
+    if (!name || !slug) return res.status(400).json({ success: false, message: "Nombre y slug válidos son obligatorios" });
+    const [cat] = await getPool().query<RowDataPacket[]>("SELECT id FROM categories WHERE id = ? LIMIT 1", [categoryId]);
+    if (!cat.length) return res.status(404).json({ success: false, message: "Category not found" });
+    const [result] = await getPool().query<ResultSetHeader>(
+      `INSERT INTO subcategories (category_id, name, slug, sort_order)
+       SELECT ?, ?, ?, COALESCE(MAX(sort_order), 0) + 1 FROM subcategories WHERE category_id = ?`,
+      [categoryId, name, slug, categoryId],
+    );
+    await audit(getPool(), { ...auditFrom(req), action: "subcategory.create", entityType: "subcategory", entityId: result.insertId, details: { category_id: categoryId, name, slug } });
+    res.status(201).json({ success: true, data: { id: result.insertId, slug } });
+  } catch (error: any) {
+    if (error?.code === "ER_DUP_ENTRY") return res.status(409).json({ success: false, message: "Ese slug ya existe en la sección" });
+    res.status(500).json({ success: false, message: "Failed to create subcategory", ...devError(error) });
+  }
+};
+
+/** PUT /api/admin/subcategories/:id { name?, slug? } */
+const handleAdminUpdateSubcategory: RequestHandler = async (req, res) => {
+  try {
+    const id = parseId(req.params.id);
+    if (!id) return res.status(400).json({ success: false, message: "Invalid id" });
+    const sets: string[] = [];
+    const vals: (string | number)[] = [];
+    if (req.body?.name !== undefined) {
+      const name = sanitizePlainText(req.body.name, 100).trim();
+      if (!name) return res.status(400).json({ success: false, message: "Nombre obligatorio" });
+      sets.push("name = ?");
+      vals.push(name);
+    }
+    if (req.body?.slug !== undefined) {
+      const slug = normalizeTaxonomySlug(req.body.slug, "");
+      if (!slug) return res.status(400).json({ success: false, message: "Slug inválido" });
+      sets.push("slug = ?");
+      vals.push(slug);
+    }
+    if (!sets.length) return res.status(400).json({ success: false, message: "No fields to update" });
+    const [result] = await getPool().query<ResultSetHeader>(`UPDATE subcategories SET ${sets.join(", ")} WHERE id = ?`, [...vals, id]);
+    if (!result.affectedRows) return res.status(404).json({ success: false, message: "Subcategory not found" });
+    await audit(getPool(), { ...auditFrom(req), action: "subcategory.update", entityType: "subcategory", entityId: id, details: { fields: Object.keys(req.body ?? {}) } });
+    res.json({ success: true, data: { id } });
+  } catch (error: any) {
+    if (error?.code === "ER_DUP_ENTRY") return res.status(409).json({ success: false, message: "Ese slug ya existe en la sección" });
+    res.status(500).json({ success: false, message: "Failed to update subcategory", ...devError(error) });
+  }
+};
+
+/**
+ * DELETE /api/admin/subcategories/:id?move_to=<subcategoryId>|none
+ * Articles always stay in the parent section; with move_to=none their
+ * subsection is cleared, otherwise they move to a sibling subsection.
+ */
+const handleAdminDeleteSubcategory: RequestHandler = async (req, res) => {
+  const id = parseId(req.params.id);
+  if (!id) return res.status(400).json({ success: false, message: "Invalid id" });
+  const moveRaw = String(req.query.move_to ?? "");
+  const conn = await getPool().getConnection();
+  try {
+    await conn.beginTransaction();
+    const [subs] = await conn.query<RowDataPacket[]>("SELECT id, category_id, slug FROM subcategories WHERE id = ? FOR UPDATE", [id]);
+    const sub = subs[0];
+    if (!sub) {
+      await conn.rollback();
+      return res.status(404).json({ success: false, message: "Subcategory not found" });
+    }
+    const [cnt] = await conn.query<RowDataPacket[]>("SELECT COUNT(*) AS n FROM articles WHERE subcategory_id = ?", [id]);
+    const n = Number(cnt[0]?.n ?? 0);
+    let target: number | null = null;
+    if (n > 0) {
+      if (moveRaw !== "none") {
+        target = parseId(moveRaw);
+        if (!target || target === id) {
+          await conn.rollback();
+          return res.status(409).json({ success: false, message: "La subsección tiene artículos: elige a dónde moverlos", data: { article_count: n } });
+        }
+        const [sib] = await conn.query<RowDataPacket[]>("SELECT id FROM subcategories WHERE id = ? AND category_id = ? LIMIT 1", [target, sub.category_id]);
+        if (!sib.length) {
+          await conn.rollback();
+          return res.status(400).json({ success: false, message: "Subsección destino inválida" });
+        }
+      }
+      await conn.query("UPDATE articles SET subcategory_id = ? WHERE subcategory_id = ?", [target, id]);
+    }
+    await conn.query("DELETE FROM subcategories WHERE id = ?", [id]);
+    await conn.commit();
+    await audit(getPool(), { ...auditFrom(req), action: "subcategory.delete", entityType: "subcategory", entityId: id, details: { slug: sub.slug, category_id: sub.category_id, moved_to: target, moved: n } });
+    res.json({ success: true, data: { id, moved: n } });
+  } catch (error) {
+    await conn.rollback().catch(() => undefined);
+    res.status(500).json({ success: false, message: "Failed to delete subcategory", ...devError(error) });
+  } finally {
+    conn.release();
+  }
+};
+
+/** PATCH /api/admin/categories/:id/subcategories/reorder { ids: number[] } */
+const handleAdminReorderSubcategories: RequestHandler = async (req, res) => {
+  const categoryId = parseId(req.params.id);
+  if (!categoryId) return res.status(400).json({ success: false, message: "Invalid id" });
+  const conn = await getPool().getConnection();
+  try {
+    await conn.beginTransaction();
+    const [rows] = await conn.query<RowDataPacket[]>("SELECT id FROM subcategories WHERE category_id = ? FOR UPDATE", [categoryId]);
+    const err = validateReorder(req.body?.ids, rows.map((r) => Number(r.id)));
+    if (err) {
+      await conn.rollback();
+      return res.status(400).json({ success: false, message: err });
+    }
+    const ids = (req.body.ids as number[]).map(Number);
+    for (let i = 0; i < ids.length; i++) {
+      await conn.query("UPDATE subcategories SET sort_order = ? WHERE id = ?", [i + 1, ids[i]]);
+    }
+    await conn.commit();
+    await audit(getPool(), { ...auditFrom(req), action: "subcategory.reorder", entityType: "category", entityId: categoryId, details: { ids } });
+    res.json({ success: true, data: { ids } });
+  } catch (error) {
+    await conn.rollback().catch(() => undefined);
+    res.status(500).json({ success: false, message: "Failed to reorder subcategories", ...devError(error) });
+  } finally {
+    conn.release();
+  }
+};
+
+// ---------------------------------------------------------------------
+// Admin: newsletter
+// ---------------------------------------------------------------------
+
+const NEWSLETTER_STATUSES = new Set(["pending", "active", "unsubscribed"]);
+
+function newsletterWhere(req: express.Request): { where: string; params: string[] } {
+  const conditions: string[] = [];
+  const params: string[] = [];
+  const status = req.query.status ? String(req.query.status) : "";
+  if (NEWSLETTER_STATUSES.has(status)) {
+    conditions.push("status = ?");
+    params.push(status);
+  }
+  const q = typeof req.query.q === "string" ? req.query.q.trim().toLowerCase().slice(0, 120) : "";
+  if (q) {
+    conditions.push("email LIKE ?");
+    params.push(`%${q.replace(/[\\%_]/g, (m) => `\\${m}`)}%`);
+  }
+  return { where: conditions.length ? `WHERE ${conditions.join(" AND ")}` : "", params };
+}
+
+/** GET /api/admin/newsletter/subscribers?page=&limit=&status=&q= */
+const handleAdminGetNewsletterSubscribers: RequestHandler = async (req, res) => {
+  try {
+    const page = Math.max(1, parseInt(String(req.query.page || "1")) || 1);
+    const limit = Math.min(100, Math.max(1, parseInt(String(req.query.limit || "20")) || 20));
+    const offset = (page - 1) * limit;
+    const { where, params } = newsletterWhere(req);
     const [[countRow], [rows]] = await Promise.all([
+      getPool().query<RowDataPacket[]>(`SELECT COUNT(*) AS total FROM newsletter_subscribers ${where}`, params),
       getPool().query<RowDataPacket[]>(
-        `SELECT COUNT(*) AS total FROM newsletter_subscribers ${where}`,
-        params,
-      ),
-      getPool().query<RowDataPacket[]>(
-        `SELECT id, email, name, source, status, subscribed_at, unsubscribed_at
+        `SELECT id, email, name, source, status, subscribed_at, confirmed_at, unsubscribed_at
          FROM newsletter_subscribers ${where}
-         ORDER BY subscribed_at DESC LIMIT ? OFFSET ?`,
+         ORDER BY subscribed_at DESC, id DESC LIMIT ? OFFSET ?`,
         [...params, limit, offset],
       ),
     ]);
-
     const total = Number((countRow as RowDataPacket[])[0]?.total ?? 0);
-    res.json({
-      success: true,
-      data: rows,
-      pagination: {
-        page,
-        limit,
-        total,
-        totalPages: Math.ceil(total / limit),
-      },
-    });
+    res.json({ success: true, data: rows, pagination: { page, limit, total, totalPages: Math.ceil(total / limit) } });
   } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: "Failed to fetch newsletter subscribers",
-    });
+    res.status(500).json({ success: false, message: "Failed to fetch newsletter subscribers" });
   }
 };
 
-/**
- * GET /api/admin/settings
- */
+/** GET /api/admin/newsletter/stats */
+const handleAdminNewsletterStats: RequestHandler = async (_req, res) => {
+  try {
+    const [[counts], [daily], [sources]] = await Promise.all([
+      getPool().query<RowDataPacket[]>(
+        `SELECT SUM(status = 'active') AS active,
+                SUM(status = 'pending') AS pending,
+                SUM(status = 'unsubscribed') AS unsubscribed,
+                SUM(subscribed_at >= NOW() - INTERVAL 7 DAY) AS new_7d,
+                COUNT(*) AS total
+         FROM newsletter_subscribers`,
+      ),
+      getPool().query<RowDataPacket[]>(
+        `SELECT DATE_FORMAT(subscribed_at, '%Y-%m-%d') AS day, COUNT(*) AS n
+         FROM newsletter_subscribers
+         WHERE subscribed_at >= UTC_DATE() - INTERVAL 29 DAY
+         GROUP BY day`,
+      ),
+      getPool().query<RowDataPacket[]>(
+        `SELECT COALESCE(NULLIF(source, ''), 'desconocido') AS source, COUNT(*) AS n
+         FROM newsletter_subscribers
+         GROUP BY COALESCE(NULLIF(source, ''), 'desconocido')
+         ORDER BY n DESC LIMIT 8`,
+      ),
+    ]);
+    const c: RowDataPacket | Record<string, never> = (counts as RowDataPacket[])[0] ?? {};
+    res.json({
+      success: true,
+      data: {
+        counts: {
+          active: Number(c.active ?? 0),
+          pending: Number(c.pending ?? 0),
+          unsubscribed: Number(c.unsubscribed ?? 0),
+          new_7d: Number(c.new_7d ?? 0),
+          total: Number(c.total ?? 0),
+        },
+        daily: fillDailySeries(daily as Array<{ day: string; n: number }>, 30),
+        sources: (sources as RowDataPacket[]).map((r) => ({ source: String(r.source), count: Number(r.n) })),
+      },
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: "Failed to fetch newsletter stats", ...devError(error) });
+  }
+};
+
+/** GET /api/admin/newsletter/export.csv — streams active subscribers. */
+const handleAdminNewsletterExport: RequestHandler = async (req, res) => {
+  try {
+    const stamp = new Date().toISOString().slice(0, 10);
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", `attachment; filename="suscriptores-activos-${stamp}.csv"`);
+    res.setHeader("Cache-Control", "no-store");
+    res.write("﻿" + csvRow(["email", "nombre", "origen", "suscrito", "confirmado"]));
+    let lastId = 0;
+    let exported = 0;
+    for (;;) {
+      const [rows] = await getPool().query<RowDataPacket[]>(
+        `SELECT id, email, name, source, subscribed_at, confirmed_at
+         FROM newsletter_subscribers WHERE status = 'active' AND id > ?
+         ORDER BY id ASC LIMIT 1000`,
+        [lastId],
+      );
+      if (!rows.length) break;
+      res.write(rows.map((r) => csvRow([r.email, r.name, r.source, r.subscribed_at, r.confirmed_at])).join(""));
+      exported += rows.length;
+      lastId = Number(rows[rows.length - 1].id);
+      if (rows.length < 1000) break;
+    }
+    await audit(getPool(), { ...auditFrom(req), action: "newsletter.export", entityType: "newsletter", details: { exported } });
+    res.end();
+  } catch (error) {
+    if (!res.headersSent) res.status(500).json({ success: false, message: "Failed to export" });
+    else res.end();
+  }
+};
+
+async function sendNewsletterConfirmEmail(email: string, confirmToken: string): Promise<void> {
+  const base = (process.env.BASE_URL || "https://intelinota.com").replace(/\/$/, "");
+  const confirmUrl = `${base}/api/newsletter/confirm?token=${encodeURIComponent(confirmToken)}`;
+  await sendEmail({
+    to: email,
+    subject: "Confirma tu suscripción a INTELINOTA",
+    html: `<div style="font-family:Georgia,serif;max-width:520px;margin:auto;padding:32px">
+<h1 style="font-size:24px">Un paso más</h1>
+<p>Confirma tu suscripción al boletín de INTELINOTA:</p>
+<p><a href="${escapeHtml(confirmUrl)}" style="display:inline-block;padding:12px 20px;background:#111;color:#fff;text-decoration:none;border-radius:6px">Confirmar suscripción</a></p>
+<p style="color:#777;font-size:13px">Si no solicitaste esto, ignora este correo.</p></div>`,
+  });
+}
+
+/** POST /api/admin/newsletter/subscribers/:id/resend — pending only */
+const handleAdminNewsletterResend: RequestHandler = async (req, res) => {
+  try {
+    const id = parseId(req.params.id);
+    if (!id) return res.status(400).json({ success: false, message: "Invalid id" });
+    const [rows] = await getPool().query<RowDataPacket[]>(
+      "SELECT id, email, status FROM newsletter_subscribers WHERE id = ? LIMIT 1",
+      [id],
+    );
+    const sub = rows[0];
+    if (!sub) return res.status(404).json({ success: false, message: "Suscriptor no encontrado" });
+    if (sub.status !== "pending") return res.status(409).json({ success: false, message: "Solo se reenvía a suscriptores pendientes" });
+    if (memoryRateLimit(`nl-resend:${id}`, 3, 60 * 60 * 1000)) {
+      return res.status(429).json({ success: false, message: "Demasiados reenvíos. Intenta más tarde." });
+    }
+    const token = randomToken(24);
+    await getPool().query("UPDATE newsletter_subscribers SET confirm_token = ? WHERE id = ?", [token, id]);
+    await sendNewsletterConfirmEmail(String(sub.email), token);
+    await audit(getPool(), { ...auditFrom(req), action: "newsletter.resend_confirm", entityType: "newsletter_subscriber", entityId: id });
+    res.json({ success: true, data: { id } });
+  } catch (error) {
+    res.status(500).json({ success: false, message: "No se pudo reenviar la confirmación", ...devError(error) });
+  }
+};
+
+/** POST /api/admin/newsletter/subscribers/:id/unsubscribe */
+const handleAdminNewsletterUnsubscribe: RequestHandler = async (req, res) => {
+  try {
+    const id = parseId(req.params.id);
+    if (!id) return res.status(400).json({ success: false, message: "Invalid id" });
+    const [result] = await getPool().query<ResultSetHeader>(
+      `UPDATE newsletter_subscribers SET status = 'unsubscribed', unsubscribed_at = NOW(), confirm_token = NULL
+       WHERE id = ? AND status <> 'unsubscribed'`,
+      [id],
+    );
+    if (!result.affectedRows) return res.status(404).json({ success: false, message: "Suscriptor no encontrado o ya dado de baja" });
+    await audit(getPool(), { ...auditFrom(req), action: "newsletter.unsubscribe", entityType: "newsletter_subscriber", entityId: id });
+    res.json({ success: true, data: { id } });
+  } catch (error) {
+    res.status(500).json({ success: false, message: "No se pudo dar de baja" });
+  }
+};
+
+/** DELETE /api/admin/newsletter/subscribers/:id */
+const handleAdminNewsletterDelete: RequestHandler = async (req, res) => {
+  try {
+    const id = parseId(req.params.id);
+    if (!id) return res.status(400).json({ success: false, message: "Invalid id" });
+    const [result] = await getPool().query<ResultSetHeader>("DELETE FROM newsletter_subscribers WHERE id = ?", [id]);
+    if (!result.affectedRows) return res.status(404).json({ success: false, message: "Suscriptor no encontrado" });
+    await audit(getPool(), { ...auditFrom(req), action: "newsletter.delete", entityType: "newsletter_subscriber", entityId: id });
+    res.json({ success: true, data: { id } });
+  } catch (error) {
+    res.status(500).json({ success: false, message: "No se pudo eliminar" });
+  }
+};
+
+// ---------------------------------------------------------------------
+// Admin: settings (whitelisted keys only)
+// ---------------------------------------------------------------------
+
+/** GET /api/admin/settings */
 const handleAdminGetSettings: RequestHandler = async (_req, res) => {
   try {
     const [rows] = await getPool().query<RowDataPacket[]>(
@@ -3898,35 +4299,31 @@ const handleAdminGetSettings: RequestHandler = async (_req, res) => {
   }
 };
 
-/**
- * PUT /api/admin/settings
- */
+/** PUT /api/admin/settings { settings: [{ key, value }] } — whitelist only */
 const handleAdminUpdateSettings: RequestHandler = async (req, res) => {
   try {
-    const settings = req.body?.settings as
-      | Array<{ key: string; value: string }>
-      | undefined;
-    if (!Array.isArray(settings) || !settings.length) {
-      return res
-        .status(400)
-        .json({ success: false, message: "settings array required" });
+    const settings = req.body?.settings as Array<{ key: string; value: unknown }> | undefined;
+    if (!Array.isArray(settings) || !settings.length || settings.length > 10) {
+      return res.status(400).json({ success: false, message: "settings array required" });
     }
-
+    const valid: Array<{ key: string; value: string }> = [];
     for (const item of settings) {
-      if (!item.key || item.value === undefined) continue;
+      const r = validateSetting(String(item?.key ?? ""), item?.value);
+      if ("error" in r) return res.status(400).json({ success: false, message: r.error });
+      valid.push(r);
+    }
+    for (const item of valid) {
       await getPool().query(
         `INSERT INTO system_settings (setting_key, setting_value, setting_type, description)
          VALUES (?, ?, 'string', 'Updated via admin settings')
          ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value), updated_at = NOW()`,
-        [String(item.key).slice(0, 100), String(item.value)],
+        [item.key, item.value],
       );
     }
-
+    await audit(getPool(), { ...auditFrom(req), action: "settings.update", entityType: "settings", details: { keys: valid.map((v) => v.key) } });
     res.json({ success: true, data: { message: "Settings updated" } });
   } catch (error) {
-    res
-      .status(500)
-      .json({ success: false, message: "Failed to update settings" });
+    res.status(500).json({ success: false, message: "Failed to update settings" });
   }
 };
 
@@ -3983,18 +4380,8 @@ const handleNewsletterSubscribe: RequestHandler = async (req, res) => {
       [email, source, confirmToken, unsubscribeToken],
     );
 
-    const base = (process.env.BASE_URL || "https://intelinota.com").replace(/\/$/, "");
-    const confirmUrl = `${base}/api/newsletter/confirm?token=${encodeURIComponent(confirmToken)}`;
     try {
-      await sendEmail({
-        to: email,
-        subject: "Confirma tu suscripción a INTELINOTA",
-        html: `<div style="font-family:Georgia,serif;max-width:520px;margin:auto;padding:32px">
-<h1 style="font-size:24px">Un paso más</h1>
-<p>Confirma tu suscripción al boletín de INTELINOTA:</p>
-<p><a href="${escapeHtml(confirmUrl)}" style="display:inline-block;padding:12px 20px;background:#111;color:#fff;text-decoration:none;border-radius:6px">Confirmar suscripción</a></p>
-<p style="color:#777;font-size:13px">Si no solicitaste esto, ignora este correo.</p></div>`,
-      });
+      await sendNewsletterConfirmEmail(email, confirmToken);
     } catch (mailErr) {
       console.error("newsletter confirm email failed:", mailErr);
     }
@@ -6124,18 +6511,21 @@ function createServer() {
     requireAdmin,
     handleAdminGetCategories,
   );
-  expressApp.put(
-    "/api/admin/categories/:id",
-    requireAdminAuth,
-    requireAdmin,
-    handleAdminUpdateCategory,
-  );
-  expressApp.get(
-    "/api/admin/newsletter/subscribers",
-    requireAdminAuth,
-    requireAdmin,
-    handleAdminGetNewsletterSubscribers,
-  );
+  expressApp.get("/api/admin/categories/slug-available", requireAdminAuth, requireAdmin, handleAdminCategorySlugAvailable);
+  expressApp.post("/api/admin/categories", requireAdminAuth, requireAdmin, handleAdminCreateCategory);
+  expressApp.patch("/api/admin/categories/reorder", requireAdminAuth, requireAdmin, handleAdminReorderCategories);
+  expressApp.put("/api/admin/categories/:id", requireAdminAuth, requireAdmin, handleAdminUpdateCategory);
+  expressApp.delete("/api/admin/categories/:id", requireAdminAuth, requireAdmin, handleAdminDeleteCategory);
+  expressApp.post("/api/admin/categories/:id/subcategories", requireAdminAuth, requireAdmin, handleAdminCreateSubcategory);
+  expressApp.patch("/api/admin/categories/:id/subcategories/reorder", requireAdminAuth, requireAdmin, handleAdminReorderSubcategories);
+  expressApp.put("/api/admin/subcategories/:id", requireAdminAuth, requireAdmin, handleAdminUpdateSubcategory);
+  expressApp.delete("/api/admin/subcategories/:id", requireAdminAuth, requireAdmin, handleAdminDeleteSubcategory);
+  expressApp.get("/api/admin/newsletter/subscribers", requireAdminAuth, requireAdmin, handleAdminGetNewsletterSubscribers);
+  expressApp.get("/api/admin/newsletter/stats", requireAdminAuth, requireAdmin, handleAdminNewsletterStats);
+  expressApp.get("/api/admin/newsletter/export.csv", requireAdminAuth, requireAdmin, handleAdminNewsletterExport);
+  expressApp.post("/api/admin/newsletter/subscribers/:id/resend", requireAdminAuth, requireAdmin, handleAdminNewsletterResend);
+  expressApp.post("/api/admin/newsletter/subscribers/:id/unsubscribe", requireAdminAuth, requireAdmin, handleAdminNewsletterUnsubscribe);
+  expressApp.delete("/api/admin/newsletter/subscribers/:id", requireAdminAuth, requireAdmin, handleAdminNewsletterDelete);
   expressApp.get(
     "/api/admin/settings",
     requireAdminAuth,

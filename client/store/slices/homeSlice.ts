@@ -45,7 +45,12 @@ export const fetchHome = createAsyncThunk(
 const homeSlice = createSlice({
   name: "home",
   initialState,
-  reducers: {},
+  reducers: {
+    /** Marks home data stale so the next fetchHome() refetches (e.g. after admin taxonomy edits). */
+    invalidateHome(state) {
+      state.loaded = false;
+    },
+  },
   extraReducers: (builder) => {
     builder
       .addCase(fetchHome.pending, (state) => {
@@ -69,6 +74,7 @@ const homeSlice = createSlice({
   },
 });
 
+export const { invalidateHome } = homeSlice.actions;
 export default homeSlice.reducer;
 
 // ── Selectors ────────────────────────────────────────────────

@@ -137,14 +137,25 @@ export interface AdminCommentsState {
 }
 
 export interface AdminCategoriesState {
-  items: import("@shared/api").Category[];
+  items: import("@shared/api").AdminCategory[];
   loading: boolean;
   error: string | null;
   saving: boolean;
   saveError: string | null;
 }
 
+export interface AdminNewsletterQuery {
+  page: number;
+  status: "all" | "active" | "pending" | "unsubscribed";
+  q: string;
+}
+
 export interface AdminNewsletterState {
+  query: AdminNewsletterQuery;
+  stats: import("@shared/api").NewsletterStats | null;
+  statsLoading: boolean;
+  busyIds: number[];
+  exporting: boolean;
   items: import("@shared/api").NewsletterSubscriber[];
   pagination: {
     page: number;
