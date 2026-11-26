@@ -23,7 +23,11 @@
     "db:export": "bash database/scripts/export-data.sh",
     "db:import": "bash database/scripts/import-data.sh",
     "db:tables": "bash database/scripts/show-tables.sh",
-    "deploy:prod": "tsx scripts/deploy-prod.ts"
+    "db:migrate": "bash scripts/apply-migrations.sh",
+    "check:api-inline": "tsx scripts/check-api-inline.ts",
+    "deploy:prod": "tsx scripts/deploy-prod.ts",
+    "deploy:stamp-version": "tsx scripts/deploy-prod.ts --stamp-only",
+    "test:cleanup-fixtures": "tsx scripts/cleanup-test-fixtures.ts"
   },
   "dependencies": {
     "@reduxjs/toolkit": "^2.11.2",

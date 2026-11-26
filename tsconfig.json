@@ -38,6 +38,7 @@
     "middleware.ts",
     "server/**/*",
     "shared/**/*",
+    "scripts/**/*.ts",
     "vite.config.ts",
     "vite.config.server.ts"
   ],
