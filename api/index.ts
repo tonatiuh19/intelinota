@@ -99,8 +99,23 @@ const JWT_SECRET = resolveJwtSecret();
 
 // Base URL helper — prefers explicit BASE_URL, falls back to Vercel's auto-injected
 // VERCEL_URL (no https:// prefix), then localhost for local dev
+const CANONICAL_ORIGIN = "https://www.intelinota.com";
+
+/**
+ * Public origin used for OAuth issuer, emails, sitemap/RSS and CORS.
+ * In production a missing or localhost BASE_URL falls back to the canonical
+ * domain: a dev value leaking into Vercel once broke the MCP sign-in (every
+ * OAuth URL pointed at http://localhost:8080) and the sitemap.
+ */
 const getBaseUrl = (): string => {
-  if (process.env.BASE_URL) return process.env.BASE_URL;
+  const raw = process.env.BASE_URL?.trim().replace(/\/$/, "");
+  const isProd = process.env.VERCEL_ENV === "production";
+  const isLocal = !raw || /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(raw);
+  if (isProd && isLocal) {
+    if (raw) console.error(`BASE_URL is "${raw}" in production — using ${CANONICAL_ORIGIN}`);
+    return CANONICAL_ORIGIN;
+  }
+  if (raw) return raw;
   if (process.env.VERCEL_URL) return `https://${process.env.VERCEL_URL}`;
   return `http://localhost:${process.env.PORT || 8080}`;
 };
@@ -4552,7 +4567,7 @@ const handleAdminNewsletterExport: RequestHandler = async (req, res) => {
 };
 
 async function sendNewsletterConfirmEmail(email: string, confirmToken: string): Promise<void> {
-  const base = (process.env.BASE_URL || "https://intelinota.com").replace(/\/$/, "");
+  const base = getBaseUrl().replace(/\/$/, "");
   const confirmUrl = `${base}/api/newsletter/confirm?token=${encodeURIComponent(confirmToken)}`;
   await sendEmail({
     to: email,
@@ -4741,7 +4756,7 @@ const handleNewsletterSubscribe: RequestHandler = async (req, res) => {
 
 /** GET /api/newsletter/confirm?token= — double opt-in confirmation */
 const handleNewsletterConfirm: RequestHandler = async (req, res) => {
-  const base = (process.env.BASE_URL || "").replace(/\/$/, "");
+  const base = getBaseUrl().replace(/\/$/, "");
   const token = typeof req.query.token === "string" ? req.query.token : "";
   if (!token) return res.redirect(302, `${base}/newsletter?status=invalid`);
   try {
@@ -4763,7 +4778,7 @@ const handleNewsletterConfirm: RequestHandler = async (req, res) => {
 
 /** GET|POST /api/newsletter/unsubscribe?token= — one-click unsubscribe */
 const handleNewsletterUnsubscribe: RequestHandler = async (req, res) => {
-  const base = (process.env.BASE_URL || "").replace(/\/$/, "");
+  const base = getBaseUrl().replace(/\/$/, "");
   const token =
     typeof req.query.token === "string"
       ? req.query.token
@@ -6695,7 +6710,7 @@ function createServer() {
 
   // Middleware
   const isProd = process.env.VERCEL_ENV === "production" || process.env.NODE_ENV === "production";
-  const corsOrigin = process.env.BASE_URL?.trim();
+  const corsOrigin = getBaseUrl();
   const allowedOrigins = [
     ...(corsOrigin ? [corsOrigin] : []),
     ...(isProd ? [] : ["http://localhost:8080", "http://localhost:5173"]),
