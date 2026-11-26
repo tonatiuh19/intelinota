@@ -29,6 +29,11 @@ const ACTION_LABELS: Record<string, string> = {
   "author.can_publish.revoke": "quitó permiso de publicar al autor",
   "comment.approved": "aprobó un comentario",
   "comment.spam": "marcó como spam un comentario",
+  "comment.bulk.approve": "aprobó comentarios",
+  "comment.bulk.spam": "marcó comentarios como spam",
+  "comment.bulk.pending": "devolvió comentarios a pendientes",
+  "comment.bulk.delete": "eliminó comentarios",
+  "comment.reply": "respondió un comentario",
   "comment.pending": "devolvió a pendiente un comentario",
 };
 

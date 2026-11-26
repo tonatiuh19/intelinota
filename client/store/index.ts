@@ -24,6 +24,7 @@ import revisionsReducer from "./slices/revisionsSlice";
 import adminAuditReducer from "./slices/adminAuditSlice";
 import adminReviewsReducer from "./slices/adminReviewsSlice";
 import notificationsReducer from "./slices/notificationsSlice";
+import adminMcpReducer from "./slices/adminMcpSlice";
 import type { RootState } from "./types";
 
 export const store = configureStore({
@@ -53,6 +54,7 @@ export const store = configureStore({
     adminAudit: adminAuditReducer,
     adminReviews: adminReviewsReducer,
     notifications: notificationsReducer,
+    adminMcp: adminMcpReducer,
   },
 });
 

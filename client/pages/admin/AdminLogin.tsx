@@ -3,7 +3,8 @@ import { useFormik } from "formik";
 import { adminEmailSchema, adminCodeSchema } from "@/lib/validation/schemas";
 import { SITE_LOGO } from "@/lib/branding";
 import MetaHead from "@/components/MetaHead";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
+import { safeAdminReturnPath } from "@shared/mcp";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
 import {
   requestAdminCode,
@@ -161,6 +162,9 @@ const FEATURES = [
 export default function AdminLogin() {
   const dispatch = useAppDispatch();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  // Only allow-listed same-origin paths (MCP consent) — never open redirects
+  const afterLogin = safeAdminReturnPath(searchParams.get("return")) ?? "/admin/dashboard";
 
   const loading = useAppSelector(selectAdminAuthLoading);
   const error = useAppSelector(selectAdminAuthError);
@@ -214,16 +218,16 @@ export default function AdminLogin() {
 
   useEffect(() => {
     if (isAuthenticated) {
-      navigate("/admin/dashboard", { replace: true });
+      navigate(afterLogin, { replace: true });
       return;
     }
     if (token) {
       dispatch(fetchAdminMe())
         .unwrap()
-        .then(() => navigate("/admin/dashboard", { replace: true }))
+        .then(() => navigate(afterLogin, { replace: true }))
         .catch(() => {});
     }
-  }, [isAuthenticated, token, navigate, dispatch]);
+  }, [isAuthenticated, token, navigate, dispatch, afterLogin]);
 
   useEffect(() => {
     if (codeSent) setTimeout(() => digitRefs[0].current?.focus(), 150);

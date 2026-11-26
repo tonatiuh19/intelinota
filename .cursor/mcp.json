@@ -1,0 +1,7 @@
+{
+  "mcpServers": {
+    "intelinota": {
+      "url": "https://www.intelinota.com/api/mcp"
+    }
+  }
+}

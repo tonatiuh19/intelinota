@@ -26,6 +26,7 @@ import {
 import { processAndStoreImage, isBlobConfigured } from "./_lib/media.js";
 import { buildSitemap, buildNewsSitemap, buildRss } from "./_lib/feeds.js";
 import { setArticleTags, getArticleTags, saveRevision, audit, slugify } from "./_lib/newsroom.js";
+import { scoreComment } from "./_lib/moderation.js";
 import {
   notifyUsers,
   getAdminUserIds,
@@ -36,6 +37,48 @@ import {
   type NotificationInput,
   type Queryable,
 } from "./_lib/workflow.js";
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+import { ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
+import { z } from "zod";
+import {
+  MCP_SCOPE,
+  MCP_ACCESS_TTL_SEC,
+  MCP_REFRESH_TTL_SEC,
+  MCP_CODE_TTL_MS,
+  mcpCanonicalOrigin,
+  mcpResourceUrl,
+  mcpAuthorizationServerMetadata,
+  mcpProtectedResourceMetadata,
+  mcpWwwAuthenticate,
+  sha256Hex,
+  mcpRandomSecret,
+  verifyPkceS256,
+  parseBearerAuthorization,
+  parseMcpRedirectUris,
+  mcpRedirectUriOkForRegistration,
+  mcpRedirectUriAllowed,
+  mcpWriteConfirmed,
+  mcpLimit,
+  mcpPage,
+  mcpJsonSchemaToZod,
+  mcpToolsListForClaude,
+  sanitizeMcpJsonRpcForClaude,
+  redactMcpArgs,
+  auditResultJson,
+  htmlToPlainText,
+  wordCount,
+  truncateText,
+  parseNewsroomDateTime,
+} from "./_lib/mcpOAuth.js";
+import {
+  contentToSafeHtml,
+  assertPublicHttpsUrl,
+  fetchPublicImage,
+  normalizeImageForUpload,
+  SsrfError,
+} from "./_lib/mcpContent.js";
+import { MCP_TOOLS, MCP_PROMPTS } from "./_lib/mcpTools.js";
 
 // JWT Secret — required in production (Vercel)
 function resolveJwtSecret(): string {
@@ -1317,54 +1360,60 @@ declare global {
   }
 }
 
+type StaffUser = NonNullable<express.Request["adminUser"]>;
+
+/** Loads an active staff user (admin/author) with current rights; null if not allowed. */
+async function loadStaffUser(userId: number): Promise<StaffUser | null> {
+  let rows: RowDataPacket[];
+  try {
+    [rows] = await getPool().query<RowDataPacket[]>(
+      "SELECT id, email, role, author_id, can_publish FROM users WHERE id = ? AND role IN ('admin','author') LIMIT 1",
+      [userId],
+    );
+  } catch (qErr: any) {
+    // can_publish migration not applied yet
+    if (qErr?.code !== "ER_BAD_FIELD_ERROR") throw qErr;
+    [rows] = await getPool().query<RowDataPacket[]>(
+      "SELECT id, email, role, author_id, 0 AS can_publish FROM users WHERE id = ? AND role IN ('admin','author') LIMIT 1",
+      [userId],
+    );
+  }
+  const user = rows[0];
+  if (!user) return null;
+  return {
+    userId: user.id as number,
+    email: user.email as string,
+    role: user.role as "admin" | "author",
+    authorId: (user.author_id as number | null) ?? null,
+    canPublish: user.role === "admin" || Number(user.can_publish) === 1,
+  };
+}
+
+/** Verifies an admin-panel JWT and revalidates the user in DB. */
+async function staffUserFromJwt(token: string): Promise<StaffUser | null> {
+  try {
+    const payload = jwt.verify(token, JWT_SECRET) as { userId: number };
+    if (!payload?.userId) return null;
+    return await loadStaffUser(Number(payload.userId));
+  } catch {
+    return null;
+  }
+}
+
 /** JWT auth middleware — protects /api/admin/* routes; revalidates user in DB */
 const requireAdminAuth: RequestHandler = async (req, res, next) => {
   const auth = req.headers["authorization"];
   if (!auth?.startsWith("Bearer ")) {
     return res.status(401).json({ success: false, message: "Unauthorized" });
   }
-  try {
-    const payload = jwt.verify(auth.slice(7), JWT_SECRET) as {
-      userId: number;
-      email: string;
-      role: "admin" | "author";
-      authorId: number | null;
-    };
-
-    let rows: RowDataPacket[];
-    try {
-      [rows] = await getPool().query<RowDataPacket[]>(
-        "SELECT id, email, role, author_id, can_publish FROM users WHERE id = ? AND role IN ('admin','author') LIMIT 1",
-        [payload.userId],
-      );
-    } catch (qErr: any) {
-      // can_publish migration not applied yet
-      if (qErr?.code !== "ER_BAD_FIELD_ERROR") throw qErr;
-      [rows] = await getPool().query<RowDataPacket[]>(
-        "SELECT id, email, role, author_id, 0 AS can_publish FROM users WHERE id = ? AND role IN ('admin','author') LIMIT 1",
-        [payload.userId],
-      );
-    }
-    if (!(rows as RowDataPacket[]).length) {
-      return res
-        .status(401)
-        .json({ success: false, message: "Invalid or expired token" });
-    }
-
-    const user = (rows as RowDataPacket[])[0];
-    req.adminUser = {
-      userId: user.id as number,
-      email: user.email as string,
-      role: user.role as "admin" | "author",
-      authorId: (user.author_id as number | null) ?? null,
-      canPublish: user.role === "admin" || Number(user.can_publish) === 1,
-    };
-    next();
-  } catch {
+  const user = await staffUserFromJwt(auth.slice(7));
+  if (!user) {
     return res
       .status(401)
       .json({ success: false, message: "Invalid or expired token" });
   }
+  req.adminUser = user;
+  next();
 };
 
 /** Role guard — only allows admin role */
@@ -3461,50 +3510,192 @@ const handleAdminDeleteAuthor: RequestHandler = async (req, res) => {
 /**
  * GET /api/admin/comments
  */
+/** Authors only see/moderate comments on their own articles. */
+function commentScope(req: express.Request): { sql: string; params: (string | number)[] } {
+  if (req.adminUser!.role === "admin") return { sql: "1 = 1", params: [] };
+  return { sql: "a.author_id = ?", params: [req.adminUser!.authorId ?? -1] };
+}
+
+const COMMENT_STATUSES = new Set(["pending", "approved", "spam"]);
+
+/**
+ * GET /api/admin/comments?status=&q=&flagged=1&article_id=&sort=recent|oldest|risk&page=&limit=
+ * Moderation inbox: per-status counts, risk score/flags, commenter history.
+ */
 const handleAdminGetComments: RequestHandler = async (req, res) => {
   try {
-    const status = req.query.status
-      ? String(req.query.status)
-      : "pending";
-    const page = Math.max(1, parseInt(String(req.query.page || "1")));
-    const limit = Math.min(
-      100,
-      Math.max(1, parseInt(String(req.query.limit || "20"))),
-    );
+    const status = String(req.query.status ?? "pending");
+    const page = Math.max(1, parseInt(String(req.query.page || "1")) || 1);
+    const limit = Math.min(100, Math.max(1, parseInt(String(req.query.limit || "25")) || 25));
     const offset = (page - 1) * limit;
+    const scope = commentScope(req);
 
-    const [[countRow], [rows]] = await Promise.all([
+    const conds = [scope.sql];
+    const params: (string | number)[] = [...scope.params];
+    if (COMMENT_STATUSES.has(status)) {
+      conds.push("c.status = ?");
+      params.push(status);
+    }
+    if (req.query.flagged === "1") conds.push("c.spam_score >= 40");
+    if (req.query.article_id) {
+      conds.push("c.article_id = ?");
+      params.push(Number(req.query.article_id));
+    }
+    const q = typeof req.query.q === "string" ? req.query.q.trim().slice(0, 100) : "";
+    if (q) {
+      const like = `%${escapeLike(q)}%`;
+      conds.push(
+        "(c.content LIKE ? ESCAPE '\\\\' OR c.author_name LIKE ? ESCAPE '\\\\' OR c.author_email LIKE ? ESCAPE '\\\\' OR a.title LIKE ? ESCAPE '\\\\')",
+      );
+      params.push(like, like, like, like);
+    }
+    const where = `WHERE ${conds.join(" AND ")}`;
+    const order =
+      req.query.sort === "risk"
+        ? "c.spam_score DESC, c.created_at DESC"
+        : req.query.sort === "oldest"
+          ? "c.created_at ASC"
+          : "c.created_at DESC";
+
+    const [[countRow], [rows], [counts]] = await Promise.all([
       getPool().query<RowDataPacket[]>(
-        "SELECT COUNT(*) AS total FROM comments WHERE status = ?",
-        [status],
+        `SELECT COUNT(*) AS total FROM comments c JOIN articles a ON a.id = c.article_id ${where}`,
+        params,
       ),
       getPool().query<RowDataPacket[]>(
         `SELECT c.id, c.article_id, a.title AS article_title, a.slug AS article_slug,
-                c.author_name, c.author_email, c.content, c.status, c.created_at
+                c.parent_id, p.author_name AS parent_author, LEFT(p.content, 160) AS parent_excerpt,
+                c.user_id, c.author_name, c.author_email, c.content, c.status,
+                c.spam_score, c.flags, c.created_at,
+                (SELECT COUNT(*) FROM comments h WHERE c.author_email IS NOT NULL AND h.author_email = c.author_email AND h.status = 'approved') AS author_approved,
+                (SELECT COUNT(*) FROM comments h WHERE c.author_email IS NOT NULL AND h.author_email = c.author_email AND h.status = 'spam') AS author_spam
          FROM comments c
          JOIN articles a ON a.id = c.article_id
-         WHERE c.status = ?
-         ORDER BY c.created_at DESC
+         LEFT JOIN comments p ON p.id = c.parent_id
+         ${where}
+         ORDER BY ${order}
          LIMIT ? OFFSET ?`,
-        [status, limit, offset],
+        [...params, limit, offset],
+      ),
+      getPool().query<RowDataPacket[]>(
+        `SELECT c.status, COUNT(*) AS n, SUM(c.spam_score >= 40) AS flagged
+         FROM comments c JOIN articles a ON a.id = c.article_id
+         WHERE ${scope.sql} GROUP BY c.status`,
+        scope.params,
       ),
     ]);
 
-    const total = Number((countRow as RowDataPacket[])[0]?.total ?? 0);
+    const total = Number(countRow[0]?.total ?? 0);
+    const byStatus = { pending: 0, approved: 0, spam: 0, flagged_pending: 0 };
+    for (const r of counts) {
+      if (r.status in byStatus) byStatus[r.status as "pending" | "approved" | "spam"] = Number(r.n);
+      if (r.status === "pending") byStatus.flagged_pending = Number(r.flagged ?? 0);
+    }
     res.json({
       success: true,
-      data: rows,
-      pagination: {
-        page,
-        limit,
-        total,
-        totalPages: Math.ceil(total / limit),
-      },
+      data: rows.map((r) => ({
+        ...r,
+        flags: typeof r.flags === "string" ? JSON.parse(r.flags) : (r.flags ?? []),
+        spam_score: Number(r.spam_score ?? 0),
+        author_approved: Number(r.author_approved ?? 0),
+        author_spam: Number(r.author_spam ?? 0),
+      })),
+      counts: byStatus,
+      pagination: { page, limit, total, totalPages: Math.ceil(total / limit) },
     });
   } catch (error) {
-    res
-      .status(500)
-      .json({ success: false, message: "Failed to fetch comments" });
+    console.error("admin comments error:", error);
+    res.status(500).json({ success: false, message: "Failed to fetch comments", ...devError(error) });
+  }
+};
+
+/** Comment ids (from `ids`) the current user may moderate. */
+async function allowedCommentIds(req: express.Request, ids: number[]): Promise<number[]> {
+  if (!ids.length) return [];
+  const scope = commentScope(req);
+  const [rows] = await getPool().query<RowDataPacket[]>(
+    `SELECT c.id FROM comments c JOIN articles a ON a.id = c.article_id
+     WHERE c.id IN (${ids.map(() => "?").join(",")}) AND ${scope.sql}`,
+    [...ids, ...scope.params],
+  );
+  return rows.map((r) => Number(r.id));
+}
+
+/** POST /api/admin/comments/bulk { ids, action: approve|spam|pending|delete } */
+const handleAdminBulkComments: RequestHandler = async (req, res) => {
+  try {
+    const action = String(req.body?.action ?? "");
+    const raw: unknown[] = Array.isArray(req.body?.ids) ? req.body.ids : [];
+    const ids = raw.map(Number).filter((n) => Number.isInteger(n) && n > 0).slice(0, 200);
+    if (!ids.length || !["approve", "spam", "pending", "delete"].includes(action)) {
+      return res.status(400).json({ success: false, message: "Invalid request" });
+    }
+    if (action === "delete" && req.adminUser!.role !== "admin") {
+      return res.status(403).json({ success: false, message: "Solo administradores pueden eliminar" });
+    }
+    const allowed = await allowedCommentIds(req, ids);
+    if (!allowed.length) return res.status(404).json({ success: false, message: "Comment not found" });
+    const ph = allowed.map(() => "?").join(",");
+    if (action === "delete") {
+      // Detach replies so they aren't orphaned
+      await getPool().query(`UPDATE comments SET parent_id = NULL WHERE parent_id IN (${ph})`, allowed);
+      await getPool().query(`DELETE FROM comments WHERE id IN (${ph})`, allowed);
+    } else {
+      const status = action === "approve" ? "approved" : action;
+      await getPool().query(`UPDATE comments SET status = ? WHERE id IN (${ph})`, [status, ...allowed]);
+    }
+    await audit(getPool(), {
+      ...auditFrom(req),
+      action: `comment.bulk.${action}`,
+      entityType: "comment",
+      entityId: allowed.length === 1 ? allowed[0] : null,
+      details: { ids: allowed },
+    });
+    res.json({ success: true, data: { ids: allowed, action } });
+  } catch (error) {
+    console.error("bulk comments error:", error);
+    res.status(500).json({ success: false, message: "Failed to update comments", ...devError(error) });
+  }
+};
+
+/** POST /api/admin/comments/:id/reply { content } — staff reply, auto-approved */
+const handleAdminReplyComment: RequestHandler = async (req, res) => {
+  try {
+    const id = parseInt(String(req.params.id));
+    const content = sanitizePlainText(req.body?.content, 5000);
+    if (!Number.isInteger(id) || content.length < 2) {
+      return res.status(400).json({ success: false, message: "Escribe una respuesta" });
+    }
+    const allowed = await allowedCommentIds(req, [id]);
+    if (!allowed.length) return res.status(404).json({ success: false, message: "Comment not found" });
+    const [[parent], [me]] = await Promise.all([
+      getPool().query<RowDataPacket[]>("SELECT article_id, status FROM comments WHERE id = ?", [id]),
+      getPool().query<RowDataPacket[]>(
+        "SELECT u.name, au.name AS author_name FROM users u LEFT JOIN authors au ON au.id = u.author_id WHERE u.id = ?",
+        [req.adminUser!.userId],
+      ),
+    ]);
+    const name = String(me[0]?.author_name || me[0]?.name || "Redacción");
+    // Replying to a pending comment publishes it too
+    if (parent[0]?.status === "pending") {
+      await getPool().query("UPDATE comments SET status = 'approved' WHERE id = ?", [id]);
+    }
+    const [ins] = await getPool().query<ResultSetHeader>(
+      `INSERT INTO comments (article_id, user_id, parent_id, author_name, content, status, spam_score, flags)
+       VALUES (?, ?, ?, ?, ?, 'approved', 0, ?)`,
+      [parent[0].article_id, req.adminUser!.userId, id, `${name} · INTELINOTA`, content, JSON.stringify(["staff"])],
+    );
+    await audit(getPool(), {
+      ...auditFrom(req),
+      action: "comment.reply",
+      entityType: "comment",
+      entityId: ins.insertId,
+      details: { parent_id: id },
+    });
+    res.status(201).json({ success: true, data: { id: ins.insertId } });
+  } catch (error) {
+    console.error("reply comment error:", error);
+    res.status(500).json({ success: false, message: "No se pudo responder", ...devError(error) });
   }
 };
 
@@ -3517,6 +3708,9 @@ const handleAdminPatchComment: RequestHandler = async (req, res) => {
     const status = String(req.body?.status ?? "");
     if (isNaN(id) || !["pending", "approved", "spam"].includes(status)) {
       return res.status(400).json({ success: false, message: "Invalid request" });
+    }
+    if (!(await allowedCommentIds(req, [id])).length) {
+      return res.status(404).json({ success: false, message: "Comment not found" });
     }
     const [result] = await getPool().query<ResultSetHeader>(
       "UPDATE comments SET status = ? WHERE id = ?",
@@ -3969,11 +4163,76 @@ const handlePostComment: RequestHandler = async (req, res) => {
       }
     }
 
+    // Risk scoring (history by email + IP), never blocks posting
+    let risk = { score: 0, flags: [] as string[] };
+    try {
+      const email = authorEmail?.toLowerCase() ?? null;
+      const [histRows, [dupes], [burst], blocklistRaw] = await Promise.all([
+        email
+          ? getPool()
+              .query<RowDataPacket[]>(
+                `SELECT SUM(status = 'approved') AS approved, SUM(status = 'spam') AS spam
+                 FROM comments WHERE LOWER(author_email) = ?`,
+                [email],
+              )
+              .then(([r]) => r)
+          : Promise.resolve([] as RowDataPacket[]),
+        getPool().query<RowDataPacket[]>(
+          `SELECT COUNT(*) AS n FROM comments
+           WHERE content = ? AND (ip_hash = ? OR (? IS NOT NULL AND LOWER(author_email) = ?))
+             AND created_at >= NOW() - INTERVAL 1 DAY`,
+          [content, ipHash, email, email],
+        ),
+        getPool().query<RowDataPacket[]>(
+          "SELECT COUNT(*) AS n FROM comments WHERE ip_hash = ? AND created_at >= NOW() - INTERVAL 10 MINUTE",
+          [ipHash],
+        ),
+        getSystemSetting("comment_blocklist"),
+      ]);
+      risk = scoreComment({
+        content,
+        authorName,
+        authorEmail: email,
+        blocklist: (blocklistRaw ?? "").split(","),
+        duplicateCount: Number(dupes[0]?.n ?? 0),
+        recentFromIp: Number(burst[0]?.n ?? 0),
+        approvedBefore: Number(histRows[0]?.approved ?? 0),
+        spamBefore: Number(histRows[0]?.spam ?? 0),
+      });
+    } catch (scoreErr) {
+      console.error("comment scoring failed:", scoreErr);
+    }
+
     const [result] = await getPool().query<ResultSetHeader>(
-      `INSERT INTO comments (article_id, parent_id, author_name, author_email, ip_hash, content, status)
-       VALUES (?, ?, ?, ?, ?, ?, 'pending')`,
-      [articleId, parentId, authorName, authorEmail, ipHash, content],
+      `INSERT INTO comments (article_id, parent_id, author_name, author_email, ip_hash, content, status, spam_score, flags)
+       VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?)`,
+      [articleId, parentId, authorName, authorEmail, ipHash, content, risk.score, JSON.stringify(risk.flags)],
     );
+
+    // Tell the article's author there's something to moderate (in-app only)
+    if (risk.score < 60) {
+      void (async () => {
+        try {
+          const [a] = await getPool().query<RowDataPacket[]>("SELECT author_id, title FROM articles WHERE id = ?", [articleId]);
+          if (a[0]) {
+            const ids = await getAuthorUserIds(getPool(), Number(a[0].author_id));
+            await notifyUsers(
+              getPool(),
+              ids,
+              {
+                type: "comment.pending",
+                title: `Nuevo comentario en “${String(a[0].title).slice(0, 80)}”`,
+                body: `${authorName}: ${content.slice(0, 140)}`,
+                link: "/admin/comments",
+              },
+              { exceptUserId: null, baseUrl: publicBase() },
+            );
+          }
+        } catch (nErr) {
+          console.error("comment notification failed:", nErr);
+        }
+      })();
+    }
 
     res.status(201).json({
       success: true,
@@ -4356,6 +4615,1256 @@ const handleGetTag: RequestHandler = async (req, res) => {
 };
 
 // =====================================================
+// REMOTE MCP (Streamable HTTP) + OAuth 2.1 — see mcp/README.md
+// Tools invoke the SAME Express handlers as the admin UI (in-process), so
+// every permission rule is exactly the signed-in user's rights.
+// =====================================================
+
+function mcpOrigin(): string {
+  return mcpCanonicalOrigin(getBaseUrl());
+}
+
+function mcpStr(v: unknown): string {
+  return v == null ? "" : String(v).trim();
+}
+
+type HandlerResult = { status: number; body: any };
+
+/**
+ * Runs an Express handler chain in-process with a fake req/res bound to the
+ * MCP user. Middlewares (requireAdmin) and handlers behave exactly as on the
+ * real routes.
+ */
+async function invokeAsUser(
+  chain: RequestHandler[],
+  user: StaffUser,
+  input: {
+    method?: string;
+    path?: string;
+    params?: Record<string, string | number>;
+    query?: Record<string, unknown>;
+    body?: Record<string, unknown>;
+    ip?: string;
+  },
+): Promise<HandlerResult> {
+  const headers: Record<string, string> = {
+    "content-type": "application/json",
+    "user-agent": "intelinota-mcp",
+    ...(input.ip ? { "x-real-ip": input.ip } : {}),
+  };
+  const query: Record<string, string> = {};
+  for (const [k, v] of Object.entries(input.query ?? {})) {
+    if (v === undefined || v === null || v === "") continue;
+    query[k] = typeof v === "boolean" ? (v ? "1" : "0") : String(v);
+  }
+  const params: Record<string, string> = {};
+  for (const [k, v] of Object.entries(input.params ?? {})) params[k] = String(v);
+  const req = {
+    method: input.method ?? "GET",
+    url: input.path ?? "/api/mcp/internal",
+    path: input.path ?? "/api/mcp/internal",
+    originalUrl: input.path ?? "/api/mcp/internal",
+    headers,
+    params,
+    query,
+    body: input.body ?? {},
+    socket: { remoteAddress: input.ip ?? "mcp" },
+    adminUser: { ...user },
+    get: (name: string) => headers[name.toLowerCase()],
+    header: (name: string) => headers[name.toLowerCase()],
+  } as unknown as express.Request;
+
+  let done = false;
+  let result: HandlerResult = { status: 500, body: { success: false, message: "No response" } };
+  const res = {
+    statusCode: 200,
+    headersSent: false,
+    locals: {},
+    status(code: number) {
+      this.statusCode = code;
+      return this;
+    },
+    json(body: unknown) {
+      if (!done) {
+        done = true;
+        this.headersSent = true;
+        result = { status: this.statusCode, body };
+      }
+      return this;
+    },
+    send(body: unknown) {
+      return this.json(body);
+    },
+    end() {
+      return this.json(null);
+    },
+    sendStatus(code: number) {
+      this.statusCode = code;
+      return this.json(null);
+    },
+    set() {
+      return this;
+    },
+    setHeader() {
+      return this;
+    },
+    header() {
+      return this;
+    },
+    type() {
+      return this;
+    },
+    getHeader() {
+      return undefined;
+    },
+  } as unknown as express.Response & { statusCode: number };
+
+  for (const handler of chain) {
+    let nextCalled = false;
+    let nextErr: unknown = null;
+    await handler(req, res, (err?: unknown) => {
+      nextCalled = true;
+      nextErr = err ?? null;
+    });
+    if (nextErr) throw nextErr;
+    if (done || !nextCalled) break;
+  }
+  return result;
+}
+
+type McpToolOutcome = { ok: boolean; result?: unknown; error?: string; status?: number };
+
+function fromHandler(r: HandlerResult, map?: (data: any, body: any) => unknown): McpToolOutcome {
+  const ok = r.status >= 200 && r.status < 300 && r.body?.success !== false;
+  if (!ok) {
+    return {
+      ok: false,
+      status: r.status,
+      error: String(r.body?.message || r.body?.error || `HTTP ${r.status}`),
+      result: r.body?.code ? { code: r.body.code, data: r.body.data ?? null } : undefined,
+    };
+  }
+  return { ok: true, status: r.status, result: map ? map(r.body?.data, r.body) : r.body?.data ?? r.body };
+}
+
+const MCP_LIST_TEXT_MAX = 280;
+
+function compactArticleRow(a: any) {
+  return {
+    id: a.id,
+    slug: a.slug,
+    title: a.title,
+    excerpt: truncateText(a.excerpt, MCP_LIST_TEXT_MAX),
+    status: a.status,
+    category: a.category_slug ?? a.category_name ?? null,
+    subcategory: a.subcategory_slug ?? null,
+    author: a.author_name ?? null,
+    author_id: a.author_id ?? null,
+    featured: a.featured != null ? Boolean(Number(a.featured)) : undefined,
+    published_at: toIso(a.published_at),
+    updated_at: toIso(a.updated_at),
+    view_count: a.view_count ?? undefined,
+  };
+}
+
+async function mcpResolveCategory(
+  input: unknown,
+  subInput: unknown,
+): Promise<{ category_id: number; subcategory_id: number | null } | { error: string }> {
+  const raw = mcpStr(input);
+  if (!raw) return { error: "category es obligatorio (slug o id; ver list_categories)" };
+  const [rows] = await getPool().query<RowDataPacket[]>(
+    /^\d+$/.test(raw)
+      ? "SELECT id FROM categories WHERE id = ? LIMIT 1"
+      : "SELECT id FROM categories WHERE slug = ? LIMIT 1",
+    [raw],
+  );
+  if (!rows[0]) return { error: `Categoría no encontrada: ${raw}` };
+  const categoryId = Number(rows[0].id);
+  const sub = mcpStr(subInput);
+  if (!sub) return { category_id: categoryId, subcategory_id: null };
+  const [subRows] = await getPool().query<RowDataPacket[]>(
+    /^\d+$/.test(sub)
+      ? "SELECT id FROM subcategories WHERE id = ? AND category_id = ? LIMIT 1"
+      : "SELECT id FROM subcategories WHERE slug = ? AND category_id = ? LIMIT 1",
+    [sub, categoryId],
+  );
+  if (!subRows[0]) return { error: `Subcategoría no encontrada en esa categoría: ${sub}` };
+  return { category_id: categoryId, subcategory_id: Number(subRows[0].id) };
+}
+
+async function mcpNewsroomTz(): Promise<string> {
+  return (await getSystemSetting("newsroom_timezone")) || DEFAULT_NEWSROOM_TZ;
+}
+
+/** Builds the ArticleWriteBody fields shared by create_draft / update_article. */
+async function mcpArticleBody(
+  args: Record<string, unknown>,
+  partial: boolean,
+): Promise<{ body: Record<string, unknown>; wordCount?: number } | { error: string }> {
+  const body: Record<string, unknown> = {};
+  let words: number | undefined;
+  if (args.title !== undefined) {
+    const title = sanitizePlainText(String(args.title), 255);
+    if (!title) return { error: "title vacío" };
+    body.title = title;
+  }
+  if (args.excerpt !== undefined) body.excerpt = sanitizePlainText(String(args.excerpt), 1000) || null;
+  if (args.content !== undefined) {
+    const format = args.content_format === "html" ? "html" : "markdown";
+    const html = contentToSafeHtml(String(args.content), format);
+    body.content = html;
+    words = wordCount(htmlToPlainText(html));
+    if (args.read_time_minutes === undefined) {
+      body.read_time_minutes = Math.max(1, Math.ceil(words / 200));
+    }
+  }
+  if (args.read_time_minutes !== undefined) {
+    body.read_time_minutes = Math.max(1, Math.min(120, Number(args.read_time_minutes) || 5));
+  }
+  if (args.category !== undefined || (!partial && args.category === undefined)) {
+    const cat = await mcpResolveCategory(args.category, args.subcategory);
+    if ("error" in cat) return cat;
+    body.category_id = cat.category_id;
+    body.subcategory_id = cat.subcategory_id;
+  }
+  if (Array.isArray(args.tags)) {
+    body.tags = args.tags.map((t) => sanitizePlainText(String(t), 100)).filter(Boolean).slice(0, 20);
+  }
+  if (args.slug !== undefined) {
+    const slug = slugify(String(args.slug));
+    if (!slug) return { error: "slug inválido" };
+    body.slug = slug;
+  }
+  if (args.image_url !== undefined) {
+    const url = mcpStr(args.image_url);
+    if (url && !/^https:\/\//i.test(url) && !url.startsWith("/api/media/")) {
+      return { error: "image_url debe ser https (usa upload_image_from_url)" };
+    }
+    body.image_url = url || null;
+  }
+  if (args.meta_title !== undefined) body.meta_title = args.meta_title;
+  if (args.meta_description !== undefined) body.meta_description = args.meta_description;
+  return { body, wordCount: words };
+}
+
+function mcpRights(user: StaffUser) {
+  const isAdmin = user.role === "admin";
+  return {
+    role: user.role,
+    can_publish: user.canPublish,
+    can_approve_reviews: isAdmin,
+    can_feature: isAdmin,
+    can_moderate_comments: isAdmin ? "all" : "own_articles",
+    can_delete_comments: isAdmin,
+    sees_articles: isAdmin ? "all" : "own",
+    live_edits: user.canPublish ? "applied_immediately" : "pending_review",
+  };
+}
+
+function mcpDryRun(action: string, preview: Record<string, unknown>): McpToolOutcome {
+  return {
+    ok: true,
+    result: {
+      dry_run: true,
+      action,
+      preview,
+      next_step: "Muestra esta vista previa al usuario. Si la aprueba, repite la llamada con confirm=true y confirm_phrase=CONFIRM.",
+    },
+  };
+}
+
+async function executeMcpTool(
+  user: StaffUser,
+  name: string,
+  args: Record<string, unknown>,
+  confirm: boolean,
+  ip: string,
+): Promise<McpToolOutcome> {
+  const tool = MCP_TOOLS.find((t) => t.name === name);
+  if (!tool) return { ok: false, error: `Herramienta desconocida: ${name}` };
+  if (tool.adminOnly && user.role !== "admin") {
+    return { ok: false, status: 403, error: "Solo administradores" };
+  }
+  const run = (chain: RequestHandler[], input: Parameters<typeof invokeAsUser>[2]) =>
+    invokeAsUser(tool.adminOnly ? [requireAdmin, ...chain] : chain, user, { ip, ...input });
+  const limit = mcpLimit(args);
+  const page = mcpPage(args);
+  const articleId = Number(args.article_id);
+  const needArticle = () =>
+    Number.isInteger(articleId) && articleId > 0 ? null : ({ ok: false, error: "article_id inválido" } as McpToolOutcome);
+
+  switch (name) {
+    // ── READ ──────────────────────────────────────────
+    case "whoami": {
+      const r = await run([handleAdminMe], { path: "/api/admin/me" });
+      return fromHandler(r, (d) => ({
+        id: d?.id,
+        name: d?.name,
+        email: d?.email,
+        role: d?.role,
+        author_id: d?.author_id ?? null,
+        author_profile: d?.author_id ? { bio: truncateText(d?.bio, 400), twitter_handle: d?.twitter_handle ?? null } : null,
+        newsroom_timezone: d?.newsroom_timezone,
+        rights: mcpRights(user),
+      }));
+    }
+    case "list_articles": {
+      // "mine" for admins narrows to their own author profile (never widens).
+      const asUser: StaffUser =
+        args.mine === true && user.role === "admin" && user.authorId ? { ...user, role: "author" } : user;
+      const r = await invokeAsUser([handleAdminGetArticles], asUser, {
+        ip,
+        path: "/api/admin/articles",
+        query: { page, limit, status: args.status, category: args.category, search: args.q },
+      });
+      return fromHandler(r, (d, b) => ({
+        articles: (d ?? []).map(compactArticleRow),
+        pagination: b?.pagination,
+      }));
+    }
+    case "get_article": {
+      const bad = needArticle();
+      if (bad) return bad;
+      const r = await run([handleAdminGetArticle], { path: `/api/admin/articles/${articleId}`, params: { id: articleId } });
+      return fromHandler(r, (d) => {
+        const plain = htmlToPlainText(d?.content);
+        return {
+          ...compactArticleRow(d),
+          excerpt: d?.excerpt ?? null,
+          image_url: d?.image_url ?? null,
+          read_time_minutes: d?.read_time_minutes,
+          trending: Boolean(Number(d?.trending)),
+          meta_title: d?.meta_title ?? null,
+          meta_description: d?.meta_description ?? null,
+          tags: d?.tags ?? [],
+          word_count: wordCount(plain),
+          content_html: truncateText(d?.content, 150_000),
+          content_text: truncateText(plain, 60_000),
+          legacy_blocks: Array.isArray(d?.blocks) ? d.blocks.length : 0,
+          pending_revision: d?.pending_revision ?? null,
+          public_url: d?.status === "published" ? `${mcpOrigin()}/articulo/${d?.slug}` : null,
+          admin_url: `${mcpOrigin()}/admin/articles/${articleId}/edit`,
+        };
+      });
+    }
+    case "search_published": {
+      const r = await run([handleGetArticles], {
+        path: "/api/articles",
+        query: {
+          search: args.q,
+          category: args.category,
+          author: args.author,
+          tag: args.tag,
+          since: args.since,
+          sort: args.sort,
+          page,
+          limit,
+          facets: "1",
+        },
+      });
+      return fromHandler(r, (d, b) => {
+        const list = Array.isArray(d) ? d : Array.isArray(d?.articles) ? d.articles : Array.isArray(d?.results) ? d.results : [];
+        return {
+          articles: list.map((a: any) => ({
+            ...compactArticleRow(a),
+            category: a.category?.slug ?? a.category_slug ?? a.category ?? null,
+            author: a.author?.name ?? a.author_name ?? a.author ?? null,
+            url: a.slug ? `${mcpOrigin()}/articulo/${a.slug}` : null,
+          })),
+          facets: d?.facets ?? b?.facets ?? null,
+          pagination: b?.pagination ?? d?.pagination ?? null,
+        };
+      });
+    }
+    case "list_categories": {
+      const r = await run([handleGetCategories], { path: "/api/categories" });
+      return fromHandler(r, (d) =>
+        (d ?? []).map((c: any) => ({
+          id: c.id,
+          name: c.name,
+          slug: c.slug,
+          subcategories: (c.subcategories ?? []).map((s: any) => ({ id: s.id, name: s.name, slug: s.slug })),
+        })),
+      );
+    }
+    case "list_authors": {
+      const r = await run([handleGetAuthors], { path: "/api/authors" });
+      return fromHandler(r, (d) =>
+        (d ?? []).map((a: any) => ({
+          id: a.id,
+          name: a.name,
+          slug: a.slug,
+          bio: truncateText(a.bio, 160),
+          article_count: Number(a.article_count) || 0,
+          latest_published_at: toIso(a.latest_published_at),
+        })),
+      );
+    }
+    case "list_tags": {
+      const q = mcpStr(args.q).slice(0, 100);
+      const where = q ? "WHERE t.name LIKE ? ESCAPE '\\\\'" : "";
+      const params: (string | number)[] = q ? [`%${escapeLike(q)}%`] : [];
+      const [rows] = await getPool().query<RowDataPacket[]>(
+        `SELECT t.id, t.name, t.slug, COUNT(at.article_id) AS uses
+         FROM tags t LEFT JOIN article_tags at ON at.tag_id = t.id
+         ${where}
+         GROUP BY t.id, t.name, t.slug
+         ORDER BY uses DESC, t.name ASC
+         LIMIT ? OFFSET ?`,
+        [...params, limit, (page - 1) * limit],
+      );
+      return { ok: true, result: { tags: rows.map((t) => ({ ...t, uses: Number(t.uses) })), page, limit } };
+    }
+    case "get_article_revisions": {
+      const bad = needArticle();
+      if (bad) return bad;
+      const r = await run([handleAdminListRevisions], { params: { id: articleId } });
+      return fromHandler(r, (d) =>
+        (d ?? []).slice(0, limit).map((v: any) => ({
+          id: v.id,
+          title: v.title,
+          status: v.status,
+          created_at: toIso(v.created_at),
+          by: v.user_name ?? v.user_email ?? null,
+        })),
+      );
+    }
+    case "list_review_queue": {
+      const r = await run([handleAdminGetReviews], { path: "/api/admin/reviews" });
+      return fromHandler(r, (d) => {
+        const compact = (list: unknown) =>
+          Array.isArray(list)
+            ? list.slice(0, 50).map((x: any) => ({ ...x, excerpt: truncateText(x.excerpt, MCP_LIST_TEXT_MAX), snapshot: undefined }))
+            : list;
+        return d && typeof d === "object"
+          ? Object.fromEntries(Object.entries(d).map(([k, v]) => [k, compact(v)]))
+          : d;
+      });
+    }
+    case "get_review_notes": {
+      const bad = needArticle();
+      if (bad) return bad;
+      const r = await run([handleAdminGetArticleNotes], { params: { id: articleId } });
+      return fromHandler(r, (d) =>
+        (d ?? []).slice(0, limit).map((n: any) => ({
+          id: n.id,
+          action: n.action,
+          note: n.note,
+          revision_id: n.revision_id,
+          by: n.user_name ?? null,
+          created_at: toIso(n.created_at),
+        })),
+      );
+    }
+    case "list_comments": {
+      const r = await run([handleAdminGetComments], {
+        path: "/api/admin/comments",
+        query: {
+          status: args.status ?? "pending",
+          flagged: args.flagged === true ? "1" : undefined,
+          q: args.q,
+          article_id: args.article_id,
+          page,
+          limit,
+        },
+      });
+      return fromHandler(r, (d, b) => {
+        const list = Array.isArray(d) ? d : Array.isArray(d?.items) ? d.items : [];
+        return {
+          comments: list.map((c: any) => ({
+            id: c.id,
+            article_id: c.article_id,
+            article_title: c.article_title ?? null,
+            author_name: c.author_name,
+            content: truncateText(c.content, 600),
+            status: c.status,
+            spam_score: c.spam_score ?? null,
+            flags: c.flags ?? null,
+            parent_id: c.parent_id ?? null,
+            created_at: toIso(c.created_at),
+          })),
+          counts: b?.counts ?? d?.counts ?? null,
+          pagination: b?.pagination ?? d?.pagination ?? null,
+        };
+      });
+    }
+    case "list_notifications": {
+      const r = await run([handleAdminGetNotifications], { query: { unread: args.unread_only === true ? "1" : undefined } });
+      return fromHandler(r);
+    }
+    case "get_dashboard_stats": {
+      const r = await run([handleAdminDashboard], { path: "/api/admin/dashboard" });
+      return fromHandler(r, (d) => ({ scope: user.role === "admin" ? "site" : "mine", ...d }));
+    }
+    case "get_audit_log": {
+      const r = await run([handleAdminAuditLog], { query: { page, limit } });
+      return fromHandler(r, (d, b) => ({ entries: d, pagination: b?.pagination }));
+    }
+    case "check_slug": {
+      const r = await run([handleAdminSlugAvailable], {
+        query: { slug: args.slug, exclude_id: args.exclude_article_id },
+      });
+      return fromHandler(r);
+    }
+
+    // ── WRITE ─────────────────────────────────────────
+    case "create_draft": {
+      const built = await mcpArticleBody(args, false);
+      if ("error" in built) return { ok: false, error: built.error };
+      const body = built.body;
+      let authorId: number | null = user.authorId;
+      if (user.role === "admin" && args.author_id !== undefined) authorId = Number(args.author_id);
+      if (!authorId) return { ok: false, error: "Tu usuario no tiene perfil de autor; indica author_id (admin)." };
+      body.author_id = authorId;
+      body.status = "draft";
+      if (!body.slug) {
+        const sr = await run([handleAdminSlugAvailable], { query: { slug: String(body.title ?? "") } });
+        body.slug = sr.body?.data?.suggestion || slugify(String(body.title ?? ""));
+      }
+      if (!body.slug) return { ok: false, error: "No se pudo generar slug" };
+      if (!confirm) {
+        return mcpDryRun("create_draft", {
+          ...body,
+          content: truncateText(body.content, 1500),
+          word_count: built.wordCount ?? 0,
+          status: "draft",
+        });
+      }
+      const r = await run([handleAdminCreateArticle], { method: "POST", path: "/api/admin/articles", body });
+      return fromHandler(r, (d) => ({ ...d, slug: body.slug, admin_url: `${mcpOrigin()}/admin/articles/${d?.id}/edit` }));
+    }
+    case "update_article":
+    case "submit_for_review":
+    case "publish_article":
+    case "archive_article":
+    case "set_featured": {
+      const bad = needArticle();
+      if (bad) return bad;
+      let body: Record<string, unknown> = {};
+      let wc: number | undefined;
+      if (name === "update_article") {
+        const built = await mcpArticleBody(args, true);
+        if ("error" in built) return { ok: false, error: built.error };
+        body = built.body;
+        wc = built.wordCount;
+        if (!Object.keys(body).length) return { ok: false, error: "No hay campos para actualizar" };
+      } else if (name === "submit_for_review") {
+        body.status = "in_review";
+      } else if (name === "publish_article" || name === "archive_article") {
+        if (!user.canPublish) {
+          return {
+            ok: false,
+            status: 403,
+            error: "No tienes permiso de publicar/archivar. Usa submit_for_review para enviarla a revisión.",
+          };
+        }
+        if (name === "archive_article") body.status = "archived";
+        else {
+          const tz = await mcpNewsroomTz();
+          const when = args.publish_at ? parseNewsroomDateTime(args.publish_at, tz) : null;
+          if (args.publish_at && !when) return { ok: false, error: "publish_at inválido (usa ISO, p. ej. 2026-12-01T08:00)" };
+          if (when && when.getTime() > Date.now() + 60_000) {
+            body.status = "scheduled";
+            body.published_at = when.toISOString();
+          } else {
+            body.status = "published";
+          }
+        }
+      } else if (name === "set_featured") {
+        body.featured = args.featured === true;
+        if (args.trending !== undefined) body.trending = args.trending === true;
+      }
+      if (name !== "set_featured") {
+        const expected = mcpStr(args.expected_updated_at);
+        if (!expected) return { ok: false, error: "expected_updated_at es obligatorio (de get_article)" };
+        body.expected_updated_at = expected;
+      }
+      // Load current state with the user's rights (403/404 as in the UI)
+      const cur = await run([handleAdminGetArticle], { params: { id: articleId } });
+      if (cur.status !== 200) return fromHandler(cur);
+      const current = cur.body?.data ?? {};
+      if (!confirm) {
+        const changes: Record<string, { from: unknown; to: unknown }> = {};
+        for (const [k, v] of Object.entries(body)) {
+          if (k === "expected_updated_at") continue;
+          const from = k === "content" ? truncateText(current.content, 400) : current[k];
+          changes[k] = { from, to: k === "content" ? truncateText(v, 1200) : v };
+        }
+        const pending = !user.canPublish && current.status === "published";
+        return mcpDryRun(name, {
+          article_id: articleId,
+          title: current.title,
+          current_status: current.status,
+          changes,
+          ...(wc !== undefined ? { new_word_count: wc } : {}),
+          outcome: pending
+            ? "La nota está publicada y no puedes publicar: el cambio quedará PENDIENTE de revisión (no sale en vivo)."
+            : "El cambio se aplicará directamente.",
+          stale:
+            body.expected_updated_at && toIso(current.updated_at) !== toIso(body.expected_updated_at)
+              ? "expected_updated_at no coincide con la versión actual: al confirmar devolverá 409 CONFLICT. Vuelve a leer con get_article."
+              : undefined,
+        });
+      }
+      const r = await run([handleAdminUpdateArticle], {
+        method: "PUT",
+        path: `/api/admin/articles/${articleId}`,
+        params: { id: articleId },
+        body,
+      });
+      return fromHandler(r, (d) =>
+        r.status === 202
+          ? { ...d, pending_review: true, message: "Edición enviada a revisión; la versión en vivo no cambió." }
+          : d,
+      );
+    }
+    case "restore_revision": {
+      const bad = needArticle();
+      if (bad) return bad;
+      const revId = Number(args.revision_id);
+      if (!Number.isInteger(revId) || revId < 1) return { ok: false, error: "revision_id inválido" };
+      if (!confirm) {
+        const list = await run([handleAdminListRevisions], { params: { id: articleId } });
+        if (list.status !== 200) return fromHandler(list);
+        const rev = (list.body?.data ?? []).find((v: any) => Number(v.id) === revId);
+        if (!rev) return { ok: false, status: 404, error: "Versión no encontrada" };
+        return mcpDryRun("restore_revision", {
+          article_id: articleId,
+          revision: { id: rev.id, title: rev.title, created_at: toIso(rev.created_at), by: rev.user_name ?? null },
+          outcome: user.canPublish
+            ? "Se restaurará el contenido (no cambia el estado de publicación)."
+            : "Si la nota está publicada, quedará como edición pendiente de revisión.",
+        });
+      }
+      const r = await run([handleAdminRestoreRevision], { method: "POST", params: { id: articleId, revId } });
+      return fromHandler(r, (d) => (r.status === 202 ? { ...d, pending_review: true } : d));
+    }
+    case "upload_image_from_url": {
+      const url = mcpStr(args.url);
+      try {
+        const target = await assertPublicHttpsUrl(url);
+        if (!confirm) {
+          return mcpDryRun("upload_image_from_url", {
+            url: target.url.toString(),
+            alt_text: args.alt_text ?? null,
+            limits: "https, imagen ≤ 10 MB; se optimiza y guarda en la mediateca",
+          });
+        }
+        const fetched = await fetchPublicImage(url);
+        const norm = await normalizeImageForUpload(fetched.buffer, fetched.contentType, MAX_UPLOAD_BYTES);
+        const ext = norm.mime === "image/png" ? "png" : norm.mime === "image/webp" ? "webp" : "jpg";
+        const base = slugify(decodeURIComponent(target.url.pathname.split("/").pop() || "imagen").replace(/\.[a-z0-9]+$/i, "")) || "imagen";
+        const r = await run([handleAdminUpload], {
+          method: "POST",
+          path: "/api/admin/upload",
+          body: {
+            data_base64: norm.buffer.toString("base64"),
+            mime_type: norm.mime,
+            filename: `${base.slice(0, 80)}.${ext}`,
+            alt_text: args.alt_text,
+          },
+        });
+        return fromHandler(r, (d) => ({ id: d?.id, url: d?.url, width: d?.width, height: d?.height, source: fetched.finalUrl }));
+      } catch (err) {
+        if (err instanceof SsrfError) return { ok: false, status: 400, error: `URL rechazada: ${err.code}` };
+        throw err;
+      }
+    }
+    case "approve_article": {
+      const bad = needArticle();
+      if (bad) return bad;
+      const tz = await mcpNewsroomTz();
+      const when = args.publish_at ? parseNewsroomDateTime(args.publish_at, tz) : null;
+      if (args.publish_at && !when) return { ok: false, error: "publish_at inválido" };
+      const body = { published_at: when ? when.toISOString() : null, note: args.note };
+      if (!confirm) {
+        const cur = await run([handleAdminGetArticle], { params: { id: articleId } });
+        if (cur.status !== 200) return fromHandler(cur);
+        return mcpDryRun("approve_article", {
+          article_id: articleId,
+          title: cur.body?.data?.title,
+          current_status: cur.body?.data?.status,
+          outcome: when && when.getTime() > Date.now() + 60_000 ? `Programada para ${when.toISOString()} (${tz})` : "Se publica ahora",
+          note: args.note ?? null,
+        });
+      }
+      return fromHandler(await run([handleAdminApproveArticle], { method: "POST", params: { id: articleId }, body }));
+    }
+    case "return_article": {
+      const bad = needArticle();
+      if (bad) return bad;
+      if (!confirm) return mcpDryRun("return_article", { article_id: articleId, note: args.note });
+      return fromHandler(
+        await run([handleAdminReturnArticle], { method: "POST", params: { id: articleId }, body: { note: args.note } }),
+      );
+    }
+    case "approve_pending_edit":
+    case "reject_pending_edit": {
+      const revId = Number(args.revision_id);
+      if (!Number.isInteger(revId) || revId < 1) return { ok: false, error: "revision_id inválido" };
+      if (!confirm) return mcpDryRun(name, { revision_id: revId, note: args.note ?? null });
+      const handler = name === "approve_pending_edit" ? handleAdminApproveRevision : handleAdminRejectRevision;
+      return fromHandler(await run([handler], { method: "POST", params: { revId }, body: { note: args.note } }));
+    }
+    case "moderate_comments": {
+      const ids = (Array.isArray(args.ids) ? args.ids : []).map(Number).filter((n) => Number.isInteger(n) && n > 0).slice(0, 100);
+      if (!ids.length) return { ok: false, error: "ids vacío" };
+      if (!confirm) {
+        return mcpDryRun("moderate_comments", {
+          action: args.action,
+          ids,
+          note: args.action === "delete" && user.role !== "admin" ? "delete es solo para administradores" : undefined,
+        });
+      }
+      return fromHandler(await run([handleAdminBulkComments], { method: "POST", body: { ids, action: args.action } }));
+    }
+    case "reply_to_comment": {
+      const cid = Number(args.comment_id);
+      if (!Number.isInteger(cid) || cid < 1) return { ok: false, error: "comment_id inválido" };
+      if (!confirm) return mcpDryRun("reply_to_comment", { comment_id: cid, content: args.content });
+      return fromHandler(
+        await run([handleAdminReplyComment], { method: "POST", params: { id: cid }, body: { content: args.content } }),
+      );
+    }
+    case "mark_notifications_read": {
+      const ids = (Array.isArray(args.ids) ? args.ids : []).map(Number).filter((n) => Number.isInteger(n) && n > 0).slice(0, 100);
+      if (args.all !== true && !ids.length) return { ok: false, error: "Indica ids o all=true" };
+      if (!confirm) return mcpDryRun("mark_notifications_read", args.all === true ? { all: true } : { ids });
+      if (args.all === true) return fromHandler(await run([handleAdminReadAllNotifications], { method: "POST" }));
+      for (const nid of ids) {
+        const r = await run([handleAdminReadNotification], { method: "POST", params: { id: nid } });
+        if (r.status >= 400) return fromHandler(r);
+      }
+      return { ok: true, result: { ids } };
+    }
+    default:
+      return { ok: false, error: `Herramienta no implementada: ${name}` };
+  }
+}
+
+function mcpToolsFor(user: StaffUser) {
+  return MCP_TOOLS.filter((t) => !t.adminOnly || user.role === "admin");
+}
+
+async function writeMcpAudit(entry: {
+  userId: number;
+  clientId: string | null;
+  tool: string;
+  confirm: boolean;
+  args: Record<string, unknown>;
+  outcome: McpToolOutcome;
+  durationMs: number;
+}) {
+  try {
+    await getPool().query(
+      `INSERT INTO mcp_audit_logs (user_id, client_id, tool_name, confirm, ok, status_code, duration_ms, request_json, result_json, error_message)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        entry.userId,
+        entry.clientId,
+        entry.tool.slice(0, 120),
+        entry.confirm ? 1 : 0,
+        entry.outcome.ok ? 1 : 0,
+        entry.outcome.status ?? null,
+        entry.durationMs,
+        JSON.stringify(redactMcpArgs(entry.args)),
+        auditResultJson(entry.outcome.result ?? null),
+        entry.outcome.error ? entry.outcome.error.slice(0, 500) : null,
+      ],
+    );
+  } catch (err) {
+    console.error("[mcp] audit insert failed", err);
+  }
+}
+
+const MCP_RATE_LIMIT_PER_MIN = 60;
+
+/** Bearer = opaque OAuth access token (sha256 lookup) or, as fallback, an admin-panel JWT. */
+const requireMcpAuth: RequestHandler = async (req, res, next) => {
+  const fail = (reason: string) => {
+    console.warn("[mcp] auth_reject", { reason });
+    res.setHeader("WWW-Authenticate", mcpWwwAuthenticate(mcpOrigin()));
+    res.status(401).json({ error: "unauthorized", error_description: reason });
+  };
+  try {
+    const bearer = parseBearerAuthorization(req.headers.authorization);
+    if (!bearer) return fail(req.headers.authorization ? "authorization_not_bearer" : "missing_authorization");
+    if (!bearer.includes(".")) {
+      const hash = sha256Hex(bearer);
+      const [rows] = await getPool().query<RowDataPacket[]>(
+        `SELECT id, user_id, client_id FROM mcp_oauth_tokens
+         WHERE token_hash = ? AND revoked_at IS NULL AND expires_at > NOW() LIMIT 1`,
+        [hash],
+      );
+      if (!rows[0]) return fail("token_unknown_or_expired");
+      const user = await loadStaffUser(Number(rows[0].user_id));
+      if (!user) return fail("user_not_allowed");
+      await getPool().query("UPDATE mcp_oauth_tokens SET last_used_at = NOW() WHERE id = ?", [rows[0].id]);
+      req.adminUser = user;
+      res.locals.mcpClientId = String(rows[0].client_id);
+      return next();
+    }
+    const user = await staffUserFromJwt(bearer);
+    if (!user) return fail("session_invalid");
+    req.adminUser = user;
+    res.locals.mcpClientId = "admin-session";
+    return next();
+  } catch (err) {
+    console.error("[mcp] requireMcpAuth", err);
+    return fail("auth_error");
+  }
+};
+
+async function handleMcpStreamable(req: express.Request, res: express.Response) {
+  const user = req.adminUser!;
+  const clientId = (res.locals.mcpClientId as string | undefined) ?? null;
+  const ip = getRequestIp(req);
+  const server = new McpServer({ name: "intelinota", version: "1.0.0" });
+
+  for (const t of mcpToolsFor(user)) {
+    server.registerTool(
+      t.name,
+      { description: t.description, inputSchema: mcpJsonSchemaToZod(t.inputSchema).shape },
+      async (toolArgs: Record<string, unknown>) => {
+        const cleaned: Record<string, unknown> = {};
+        for (const [k, v] of Object.entries(toolArgs || {})) if (v !== undefined) cleaned[k] = v;
+        const confirm = !t.readOnly && mcpWriteConfirmed(cleaned);
+        const started = Date.now();
+        let outcome: McpToolOutcome;
+        if (memoryRateLimit(`mcp:${user.userId}`, MCP_RATE_LIMIT_PER_MIN, 60_000)) {
+          outcome = { ok: false, status: 429, error: "Límite de 60 llamadas por minuto. Espera un momento." };
+        } else {
+          try {
+            outcome = await executeMcpTool(user, t.name, cleaned, confirm, ip);
+          } catch (err) {
+            console.error("[mcp] tool", t.name, err);
+            outcome = { ok: false, status: 500, error: "La herramienta falló" };
+          }
+        }
+        await writeMcpAudit({ userId: user.userId, clientId, tool: t.name, confirm, args: cleaned, outcome, durationMs: Date.now() - started });
+        const payload = outcome.ok ? outcome.result : { ok: false, error: outcome.error, ...(outcome.result ? { detail: outcome.result } : {}) };
+        return {
+          content: [{ type: "text" as const, text: JSON.stringify(payload) }],
+          isError: !outcome.ok,
+        };
+      },
+    );
+  }
+
+  for (const p of MCP_PROMPTS) {
+    const argsShape: Record<string, z.ZodTypeAny> = {};
+    for (const [k, desc] of Object.entries(p.args)) argsShape[k] = z.string().describe(desc).optional();
+    server.registerPrompt(p.name, { description: p.description, argsSchema: argsShape }, (a: Record<string, string | undefined>) => ({
+      messages: [{ role: "user" as const, content: { type: "text" as const, text: p.build(a ?? {}) } }],
+    }));
+  }
+
+  server.server.setRequestHandler(ListToolsRequestSchema, async () => ({
+    tools: mcpToolsListForClaude(mcpToolsFor(user)),
+  }));
+
+  const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
+
+  // Sanitize Claude-hostile fields on the wire
+  const origSend = res.send.bind(res);
+  (res as any).json = (body: unknown) => {
+    const raw = typeof body === "string" ? body : JSON.stringify(body);
+    res.setHeader("Content-Type", "application/json");
+    return origSend(sanitizeMcpJsonRpcForClaude(raw));
+  };
+  (res as any).send = (body: unknown) =>
+    typeof body === "string" ? origSend(sanitizeMcpJsonRpcForClaude(body)) : origSend(body as any);
+  res.on("close", () => {
+    void transport.close();
+    void server.close();
+  });
+  await server.connect(transport);
+  await transport.handleRequest(req as any, res as any, req.body);
+}
+
+const MCP_CORS_PATHS = /^\/(api\/mcp|\.well-known\/)/;
+
+/** Public CORS for MCP/OAuth discovery (tokens are bearer, never cookies). */
+const mcpCors: RequestHandler = (req, res, next) => {
+  if (!MCP_CORS_PATHS.test(req.path)) return next();
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Authorization, Content-Type, Accept, Mcp-Session-Id, Mcp-Protocol-Version");
+  res.setHeader("Access-Control-Expose-Headers", "WWW-Authenticate, Mcp-Session-Id");
+  if (req.method === "OPTIONS") return res.status(204).end();
+  next();
+};
+
+async function findMcpClient(clientId: string): Promise<RowDataPacket | null> {
+  if (!clientId || clientId.length > 128) return null;
+  const [rows] = await getPool().query<RowDataPacket[]>(
+    "SELECT client_id, client_name, redirect_uris_json FROM mcp_oauth_clients WHERE client_id = ? LIMIT 1",
+    [clientId],
+  );
+  return rows[0] ?? null;
+}
+
+function mcpResourceOk(resource: string): boolean {
+  if (!resource) return true;
+  const want = mcpResourceUrl(mcpOrigin());
+  return resource.replace(/\/+$/, "") === want;
+}
+
+function mcpTokenResponse(res: express.Response, access: string, refresh: string) {
+  res.setHeader("Cache-Control", "no-store");
+  res.setHeader("Pragma", "no-cache");
+  return res.json({
+    access_token: access,
+    token_type: "bearer",
+    expires_in: MCP_ACCESS_TTL_SEC,
+    refresh_token: refresh,
+    scope: MCP_SCOPE,
+  });
+}
+
+function registerMcpRoutes(app: express.Application) {
+  const meta = (_req: express.Request, res: express.Response) =>
+    res.json(mcpAuthorizationServerMetadata(mcpOrigin()));
+  const prm = (_req: express.Request, res: express.Response) =>
+    res.json(mcpProtectedResourceMetadata(mcpOrigin()));
+  app.get(
+    [
+      "/.well-known/oauth-authorization-server",
+      "/.well-known/oauth-authorization-server/api/mcp",
+      "/.well-known/openid-configuration",
+      "/.well-known/openid-configuration/api/mcp",
+      "/api/mcp/.well-known/oauth-authorization-server",
+      "/api/mcp/.well-known/openid-configuration",
+    ],
+    meta,
+  );
+  app.get(
+    [
+      "/.well-known/oauth-protected-resource",
+      "/.well-known/oauth-protected-resource/api/mcp",
+      "/api/mcp/.well-known/oauth-protected-resource",
+    ],
+    prm,
+  );
+
+  // Streamable HTTP (stateless, JSON responses)
+  app.get("/api/mcp", requireMcpAuth, (_req, res) => {
+    res.setHeader("Allow", "POST");
+    res.status(405).json({ error: "use_post" });
+  });
+  app.delete("/api/mcp", (_req, res) => {
+    res.setHeader("Allow", "POST");
+    res.status(405).json({ error: "stateless_server" });
+  });
+  app.post(["/api/mcp", "/api/mcp/"], requireMcpAuth, (req, res) => {
+    handleMcpStreamable(req, res).catch((err) => {
+      console.error("[mcp] streamable", err);
+      if (!res.headersSent) res.status(500).json({ error: "mcp_error" });
+    });
+  });
+
+  // Dynamic Client Registration (RFC 7591) — public clients only (PKCE)
+  app.post("/api/mcp/oauth/register", async (req, res) => {
+    try {
+      const ipHash = hashIp(getRequestIp(req));
+      if (memoryRateLimit(`mcp-dcr:${ipHash}`, 20, 60 * 60_000)) {
+        return res.status(429).json({ error: "rate_limited" });
+      }
+      const rawUris: unknown[] = Array.isArray(req.body?.redirect_uris) ? req.body.redirect_uris : [];
+      const redirectUris = rawUris.map(String).filter(mcpRedirectUriOkForRegistration).slice(0, 10);
+      if (!redirectUris.length || redirectUris.length !== rawUris.length) {
+        return res.status(400).json({
+          error: "invalid_redirect_uri",
+          error_description: "redirect_uris must be Claude/Cursor callbacks, loopback http, or cursor://",
+        });
+      }
+      const clientName = sanitizePlainText(mcpStr(req.body?.client_name), 120) || "Cliente MCP";
+      const clientId = `mcp_${randomToken(18)}`;
+      await getPool().query(
+        "INSERT INTO mcp_oauth_clients (client_id, client_name, redirect_uris_json) VALUES (?, ?, ?)",
+        [clientId, clientName, JSON.stringify(redirectUris)],
+      );
+      return res.status(201).json({
+        client_id: clientId,
+        client_id_issued_at: Math.floor(Date.now() / 1000),
+        client_name: clientName,
+        redirect_uris: redirectUris,
+        token_endpoint_auth_method: "none",
+        grant_types: ["authorization_code", "refresh_token"],
+        response_types: ["code"],
+        scope: MCP_SCOPE,
+      });
+    } catch (err) {
+      console.error("[mcp] register", err);
+      return res.status(500).json({ error: "registration_failed" });
+    }
+  });
+
+  // Authorization endpoint → SPA consent page (login first if needed)
+  app.get("/api/mcp/oauth/authorize", async (req, res) => {
+    try {
+      const clientId = mcpStr(req.query.client_id);
+      const redirectUri = mcpStr(req.query.redirect_uri);
+      const challenge = mcpStr(req.query.code_challenge);
+      const method = mcpStr(req.query.code_challenge_method) || "S256";
+      const state = mcpStr(req.query.state).slice(0, 1000);
+      const resource = mcpStr(req.query.resource);
+      if (!clientId || !redirectUri || mcpStr(req.query.response_type) !== "code") {
+        return res.status(400).send("invalid_request");
+      }
+      const client = await findMcpClient(clientId);
+      if (!client) return res.status(400).send("unknown_client");
+      if (!mcpRedirectUriAllowed(redirectUri, parseMcpRedirectUris(client.redirect_uris_json))) {
+        return res.status(400).send("invalid redirect_uri");
+      }
+      // From here on errors go back to the (validated) client redirect
+      const back = (error: string) => {
+        const u = new URL(redirectUri);
+        u.searchParams.set("error", error);
+        if (state) u.searchParams.set("state", state);
+        return res.redirect(302, u.toString());
+      };
+      if (!challenge || !/^[A-Za-z0-9_-]{43,128}$/.test(challenge)) return back("invalid_request");
+      if (method !== "S256") return back("invalid_request");
+      if (!mcpResourceOk(resource)) return back("invalid_target");
+      const consent = new URL(`${mcpOrigin()}/admin/mcp-consent`);
+      consent.searchParams.set("client_id", clientId);
+      consent.searchParams.set("redirect_uri", redirectUri);
+      consent.searchParams.set("code_challenge", challenge);
+      consent.searchParams.set("scope", MCP_SCOPE);
+      if (state) consent.searchParams.set("state", state);
+      return res.redirect(302, consent.toString());
+    } catch (err) {
+      console.error("[mcp] authorize", err);
+      return res.status(500).send("authorize_failed");
+    }
+  });
+
+  // Consent page data: client name + validated redirect + my rights
+  app.get("/api/admin/mcp/oauth/client", requireAdminAuth, async (req, res) => {
+    try {
+      const clientId = mcpStr(req.query.client_id);
+      const redirectUri = mcpStr(req.query.redirect_uri);
+      const client = await findMcpClient(clientId);
+      if (!client || !mcpRedirectUriAllowed(redirectUri, parseMcpRedirectUris(client.redirect_uris_json))) {
+        return res.status(400).json({ success: false, message: "Cliente o redirect_uri inválido" });
+      }
+      const me = await buildAdminUserResponse(req.adminUser!.userId);
+      return res.json({
+        success: true,
+        data: {
+          client_id: clientId,
+          client_name: String(client.client_name || "Cliente MCP"),
+          redirect_host: new URL(redirectUri).host || new URL(redirectUri).protocol,
+          scope: MCP_SCOPE,
+          user: { name: me?.name ?? null, email: req.adminUser!.email, role: req.adminUser!.role },
+          rights: mcpRights(req.adminUser!),
+        },
+      });
+    } catch (err) {
+      console.error("[mcp] consent client", err);
+      return res.status(500).json({ success: false, message: "Error" });
+    }
+  });
+
+  // Consent decision → single-use code (hashed, 10 min)
+  app.post("/api/admin/mcp/oauth/approve", requireAdminAuth, async (req, res) => {
+    try {
+      const clientId = mcpStr(req.body?.client_id);
+      const redirectUri = mcpStr(req.body?.redirect_uri);
+      const challenge = mcpStr(req.body?.code_challenge);
+      const state = mcpStr(req.body?.state).slice(0, 1000);
+      const approve = req.body?.approve === true;
+      const client = await findMcpClient(clientId);
+      if (!client || !mcpRedirectUriAllowed(redirectUri, parseMcpRedirectUris(client.redirect_uris_json))) {
+        return res.status(400).json({ success: false, message: "invalid_client_or_redirect" });
+      }
+      const target = new URL(redirectUri);
+      if (state) target.searchParams.set("state", state);
+      if (!approve) {
+        target.searchParams.set("error", "access_denied");
+        return res.json({ success: true, data: { redirect_to: target.toString() } });
+      }
+      if (!/^[A-Za-z0-9_-]{43,128}$/.test(challenge)) {
+        return res.status(400).json({ success: false, message: "invalid_code_challenge" });
+      }
+      const code = mcpRandomSecret(32);
+      await getPool().query(
+        `INSERT INTO mcp_oauth_codes (code_hash, client_id, user_id, redirect_uri, code_challenge, code_challenge_method, scopes, expires_at)
+         VALUES (?, ?, ?, ?, ?, 'S256', ?, ?)`,
+        [sha256Hex(code), clientId, req.adminUser!.userId, redirectUri, challenge, MCP_SCOPE, new Date(Date.now() + MCP_CODE_TTL_MS)],
+      );
+      await audit(getPool(), {
+        ...auditFrom(req),
+        action: "mcp.authorize",
+        entityType: "mcp_client",
+        entityId: null,
+        details: { client_id: clientId, client_name: client.client_name },
+      });
+      target.searchParams.set("code", code);
+      return res.json({ success: true, data: { redirect_to: target.toString() } });
+    } catch (err) {
+      console.error("[mcp] approve", err);
+      return res.status(500).json({ success: false, message: "approve_failed" });
+    }
+  });
+
+  // Token endpoint: authorization_code (PKCE S256) and rotating refresh_token
+  app.post("/api/mcp/oauth/token", async (req, res) => {
+    res.setHeader("Cache-Control", "no-store");
+    try {
+      const ipHash = hashIp(getRequestIp(req));
+      if (memoryRateLimit(`mcp-token:${ipHash}`, 60, 60_000)) return res.status(429).json({ error: "rate_limited" });
+      const grantType = mcpStr(req.body?.grant_type);
+      const clientId = mcpStr(req.body?.client_id);
+      const client = await findMcpClient(clientId);
+      if (!client) return res.status(401).json({ error: "invalid_client" });
+      if (!mcpResourceOk(mcpStr(req.body?.resource))) return res.status(400).json({ error: "invalid_target" });
+
+      if (grantType === "refresh_token") {
+        const refresh = mcpStr(req.body?.refresh_token);
+        if (!refresh) return res.status(400).json({ error: "invalid_request" });
+        const [rows] = await getPool().query<RowDataPacket[]>(
+          `SELECT id, user_id FROM mcp_oauth_tokens
+           WHERE refresh_token_hash = ? AND client_id = ? AND revoked_at IS NULL
+             AND refresh_expires_at IS NOT NULL AND refresh_expires_at > NOW()
+           LIMIT 1`,
+          [sha256Hex(refresh), clientId],
+        );
+        if (!rows[0] || !(await loadStaffUser(Number(rows[0].user_id)))) {
+          return res.status(400).json({ error: "invalid_grant" });
+        }
+        const access = mcpRandomSecret();
+        const newRefresh = mcpRandomSecret();
+        // Rotation guarded by the old hash: a replayed refresh token loses the race
+        const [upd] = await getPool().query<ResultSetHeader>(
+          `UPDATE mcp_oauth_tokens
+           SET token_hash = ?, refresh_token_hash = ?,
+               expires_at = DATE_ADD(NOW(), INTERVAL ? SECOND),
+               refresh_expires_at = DATE_ADD(NOW(), INTERVAL ? SECOND),
+               last_used_at = NOW()
+           WHERE id = ? AND refresh_token_hash = ? AND revoked_at IS NULL`,
+          [sha256Hex(access), sha256Hex(newRefresh), MCP_ACCESS_TTL_SEC, MCP_REFRESH_TTL_SEC, rows[0].id, sha256Hex(refresh)],
+        );
+        if (!upd.affectedRows) return res.status(400).json({ error: "invalid_grant" });
+        return mcpTokenResponse(res, access, newRefresh);
+      }
+
+      if (grantType !== "authorization_code") return res.status(400).json({ error: "unsupported_grant_type" });
+      const code = mcpStr(req.body?.code);
+      const redirectUri = mcpStr(req.body?.redirect_uri);
+      const verifier = mcpStr(req.body?.code_verifier);
+      if (!code || !redirectUri || !verifier) return res.status(400).json({ error: "invalid_request" });
+      const [rows] = await getPool().query<RowDataPacket[]>(
+        `SELECT id, user_id, redirect_uri, code_challenge FROM mcp_oauth_codes
+         WHERE code_hash = ? AND client_id = ? AND consumed_at IS NULL AND expires_at > NOW() LIMIT 1`,
+        [sha256Hex(code), clientId],
+      );
+      const row = rows[0];
+      if (!row || String(row.redirect_uri) !== redirectUri || !verifyPkceS256(verifier, String(row.code_challenge))) {
+        return res.status(400).json({ error: "invalid_grant" });
+      }
+      // Single use: consume atomically before issuing
+      const [consumed] = await getPool().query<ResultSetHeader>(
+        "UPDATE mcp_oauth_codes SET consumed_at = NOW() WHERE id = ? AND consumed_at IS NULL",
+        [row.id],
+      );
+      if (!consumed.affectedRows) return res.status(400).json({ error: "invalid_grant" });
+      if (!(await loadStaffUser(Number(row.user_id)))) return res.status(400).json({ error: "invalid_grant" });
+      const access = mcpRandomSecret();
+      const refresh = mcpRandomSecret();
+      await getPool().query(
+        `INSERT INTO mcp_oauth_tokens
+           (token_hash, refresh_token_hash, client_id, client_name, user_id, scopes, expires_at, refresh_expires_at)
+         VALUES (?, ?, ?, ?, ?, ?, DATE_ADD(NOW(), INTERVAL ? SECOND), DATE_ADD(NOW(), INTERVAL ? SECOND))`,
+        [
+          sha256Hex(access),
+          sha256Hex(refresh),
+          clientId,
+          String(client.client_name || "Cliente MCP"),
+          row.user_id,
+          MCP_SCOPE,
+          MCP_ACCESS_TTL_SEC,
+          MCP_REFRESH_TTL_SEC,
+        ],
+      );
+      return mcpTokenResponse(res, access, refresh);
+    } catch (err) {
+      console.error("[mcp] token", err);
+      return res.status(500).json({ error: "server_error" });
+    }
+  });
+
+  // RFC 7009: always 200
+  app.post("/api/mcp/oauth/revoke", async (req, res) => {
+    try {
+      const token = mcpStr(req.body?.token);
+      if (token) {
+        const hash = sha256Hex(token);
+        await getPool().query(
+          "UPDATE mcp_oauth_tokens SET revoked_at = NOW() WHERE revoked_at IS NULL AND (token_hash = ? OR refresh_token_hash = ?)",
+          [hash, hash],
+        );
+      }
+    } catch (err) {
+      console.error("[mcp] revoke", err);
+    }
+    return res.json({ revoked: true });
+  });
+
+  // My connections (profile page)
+  app.get("/api/admin/me/mcp-connections", requireAdminAuth, async (req, res) => {
+    try {
+      const [rows] = await getPool().query<RowDataPacket[]>(
+        `SELECT id, client_id, client_name, scopes, created_at, last_used_at, expires_at, refresh_expires_at
+         FROM mcp_oauth_tokens
+         WHERE user_id = ? AND revoked_at IS NULL AND refresh_expires_at > NOW()
+         ORDER BY id DESC LIMIT 50`,
+        [req.adminUser!.userId],
+      );
+      res.json({
+        success: true,
+        data: {
+          connector_url: mcpResourceUrl(mcpOrigin()),
+          connections: rows.map((r) => ({
+            id: Number(r.id),
+            client_id: String(r.client_id),
+            client_name: r.client_name ? String(r.client_name) : "Cliente MCP",
+            scopes: String(r.scopes || MCP_SCOPE),
+            created_at: toIso(r.created_at),
+            last_used_at: toIso(r.last_used_at),
+            expires_at: toIso(r.expires_at),
+            refresh_expires_at: toIso(r.refresh_expires_at),
+          })),
+        },
+      });
+    } catch (err: any) {
+      if (err?.code === "ER_NO_SUCH_TABLE") {
+        return res.json({ success: true, data: { connector_url: mcpResourceUrl(mcpOrigin()), connections: [] } });
+      }
+      res.status(500).json({ success: false, message: "No se pudieron cargar las conexiones", ...devError(err) });
+    }
+  });
+
+  app.delete("/api/admin/me/mcp-connections/:id", requireAdminAuth, async (req, res) => {
+    try {
+      const id = parseInt(String(req.params.id));
+      if (!Number.isInteger(id)) return res.status(400).json({ success: false, message: "Invalid id" });
+      const [result] = await getPool().query<ResultSetHeader>(
+        "UPDATE mcp_oauth_tokens SET revoked_at = NOW() WHERE id = ? AND user_id = ? AND revoked_at IS NULL",
+        [id, req.adminUser!.userId],
+      );
+      if (!result.affectedRows) return res.status(404).json({ success: false, message: "Conexión no encontrada" });
+      await audit(getPool(), { ...auditFrom(req), action: "mcp.revoke", entityType: "mcp_token", entityId: id });
+      res.json({ success: true, data: { id } });
+    } catch (err) {
+      res.status(500).json({ success: false, message: "No se pudo revocar", ...devError(err) });
+    }
+  });
+}
+
+// =====================================================
 // SERVER INITIALIZATION
 // =====================================================
 
@@ -4375,6 +5884,8 @@ function createServer() {
     ...(isProd ? [] : ["http://localhost:8080", "http://localhost:5173"]),
   ];
   expressApp.disable("x-powered-by");
+  // MCP/OAuth discovery needs open CORS (bearer tokens only) — before cors()
+  expressApp.use(mcpCors);
   expressApp.use((_req, res, next) => {
     for (const [k, v] of Object.entries(SECURITY_HEADERS)) res.setHeader(k, v);
     next();
@@ -4405,6 +5916,7 @@ function createServer() {
       req.method === "GET" &&
       !req.path.startsWith("/api/admin") &&
       !req.path.startsWith("/api/cron") &&
+      !req.path.startsWith("/api/mcp") &&
       !req.path.startsWith("/api/newsletter") &&
       !req.path.includes("/comments")
     ) {
@@ -4601,18 +6113,11 @@ function createServer() {
     handleAdminDeleteAuthor,
   );
 
-  expressApp.get(
-    "/api/admin/comments",
-    requireAdminAuth,
-    requireAdmin,
-    handleAdminGetComments,
-  );
-  expressApp.patch(
-    "/api/admin/comments/:id",
-    requireAdminAuth,
-    requireAdmin,
-    handleAdminPatchComment,
-  );
+  // Comments: admins see all; authors moderate their own articles' comments
+  expressApp.get("/api/admin/comments", requireAdminAuth, handleAdminGetComments);
+  expressApp.post("/api/admin/comments/bulk", requireAdminAuth, handleAdminBulkComments);
+  expressApp.post("/api/admin/comments/:id/reply", requireAdminAuth, handleAdminReplyComment);
+  expressApp.patch("/api/admin/comments/:id", requireAdminAuth, handleAdminPatchComment);
   expressApp.get(
     "/api/admin/categories",
     requireAdminAuth,
@@ -4648,6 +6153,9 @@ function createServer() {
     requireAdminAuth,
     handleAdminUpload,
   );
+
+  // Remote MCP + OAuth (also /.well-known/* via vercel.json rewrite)
+  registerMcpRoutes(expressApp);
 
   // 404 handler - only for API routes
   expressApp.use("/api", (_req, res, next) => {

@@ -11,7 +11,8 @@ export type NotificationType =
   | "review.returned"
   | "revision.submitted"
   | "revision.approved"
-  | "revision.rejected";
+  | "revision.rejected"
+  | "comment.pending";
 
 export interface NotificationInput {
   type: NotificationType;

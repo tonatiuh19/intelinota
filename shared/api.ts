@@ -362,19 +362,51 @@ export type AdminAuthorResponse = ApiSuccess<AdminAuthor>;
 export type AdminMeResponse = ApiSuccess<AdminUser>;
 export type AdminFeaturedCountResponse = ApiSuccess<{ count: number }>;
 
+export type CommentStatus = "pending" | "approved" | "spam";
+export type CommentFlag =
+  | "links"
+  | "blocked_word"
+  | "shouting"
+  | "repeated_chars"
+  | "duplicate"
+  | "burst"
+  | "known_spammer"
+  | "too_short"
+  | "trusted"
+  | "staff";
+
 export interface AdminComment {
   id: number;
   article_id: number;
   article_title: string;
   article_slug: string;
+  parent_id: number | null;
+  parent_author: string | null;
+  parent_excerpt: string | null;
+  user_id: number | null;
   author_name: string | null;
   author_email: string | null;
   content: string;
-  status: "pending" | "approved" | "spam";
+  status: CommentStatus;
+  /** 0–100 risk score computed when posted */
+  spam_score: number;
+  flags: CommentFlag[];
+  /** Commenter history (by email) */
+  author_approved: number;
+  author_spam: number;
   created_at: string;
 }
 
-export type AdminCommentsResponse = PaginatedResponse<AdminComment>;
+export interface AdminCommentCounts {
+  pending: number;
+  approved: number;
+  spam: number;
+  flagged_pending: number;
+}
+
+export type AdminCommentsResponse = PaginatedResponse<AdminComment> & { counts: AdminCommentCounts };
+
+export type CommentBulkAction = "approve" | "spam" | "pending" | "delete";
 
 export interface AdminSettingsItem {
   setting_key: string;
@@ -618,3 +650,49 @@ export type CreateCommentResponse = ApiSuccess<{
   message: string;
   id: number;
 }>;
+
+// ── Remote MCP (AI connectors) ───────────────────────────────
+
+export interface McpRights {
+  role: "admin" | "author";
+  can_publish: boolean;
+  can_approve_reviews: boolean;
+  can_feature: boolean;
+  can_moderate_comments: "all" | "own_articles";
+  can_delete_comments: boolean;
+  sees_articles: "all" | "own";
+  live_edits: "applied_immediately" | "pending_review";
+}
+
+export interface McpConsentInfo {
+  client_id: string;
+  client_name: string;
+  redirect_host: string;
+  scope: string;
+  user: { name: string | null; email: string; role: "admin" | "author" };
+  rights: McpRights;
+}
+
+export interface McpConsentRequest {
+  client_id: string;
+  redirect_uri: string;
+  code_challenge: string;
+  state: string;
+  scope: string;
+}
+
+export interface McpConnection {
+  id: number;
+  client_id: string;
+  client_name: string;
+  scopes: string;
+  created_at: string | null;
+  last_used_at: string | null;
+  expires_at: string | null;
+  refresh_expires_at: string | null;
+}
+
+export interface McpConnectionsData {
+  connector_url: string;
+  connections: McpConnection[];
+}

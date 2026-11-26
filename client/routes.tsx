@@ -17,6 +17,7 @@ const Contact = lazy(() => import("@/pages/Contact"));
 const Privacy = lazy(() => import("@/pages/Privacy"));
 const NewsletterStatus = lazy(() => import("@/pages/NewsletterStatus"));
 const AdminLogin = lazy(() => import("@/pages/admin/AdminLogin"));
+const McpConsent = lazy(() => import("@/pages/admin/McpConsent"));
 const AdminLayout = lazy(() => import("@/pages/admin/AdminLayout"));
 const Dashboard = lazy(() => import("@/pages/admin/Dashboard"));
 const Articles = lazy(() => import("@/pages/admin/Articles"));
@@ -59,6 +60,7 @@ export default function AppRoutes() {
     <Suspense fallback={<PageLoader />}>
       <Routes>
         <Route path="/admin/login" element={<AdminLogin />} />
+        <Route path="/admin/mcp-consent" element={<McpConsent />} />
 
         <Route path="/admin" element={<AdminLayout />}>
           <Route index element={<Navigate to="dashboard" replace />} />
