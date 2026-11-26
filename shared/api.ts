@@ -168,6 +168,30 @@ export interface PaginatedResponse<T> {
 // ── Endpoint-specific types ──────────────────────────────────
 
 export type ArticlesResponse = PaginatedResponse<Article>;
+
+export interface SearchFacet {
+  slug: string;
+  name: string;
+  count: number;
+}
+
+export type SearchSort = "relevance" | "recent" | "popular" | "oldest";
+export type SearchSince = "24h" | "7d" | "30d" | "1y";
+export type SearchRead = "short" | "medium" | "long";
+
+export interface SearchParams {
+  q: string;
+  category?: string;
+  author?: string;
+  since?: SearchSince;
+  read?: SearchRead;
+  sort?: SearchSort;
+  page?: number;
+}
+
+export type SearchResponse = PaginatedResponse<Article> & {
+  facets?: { categories: SearchFacet[]; authors: SearchFacet[] };
+};
 export type ArticleResponse = ApiSuccess<Article>;
 export type ArticleBlocksResponse = ApiSuccess<ContentBlock[]>;
 export type CategoriesResponse = ApiSuccess<Category[]>;

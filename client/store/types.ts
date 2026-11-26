@@ -170,6 +170,17 @@ export interface AuthorsState {
   currentSlug: string | null;
 }
 
+export interface SearchPageState {
+  params: import("@shared/api").SearchParams | null;
+  results: import("@shared/api").Article[];
+  total: number;
+  totalPages: number;
+  facets: { categories: import("@shared/api").SearchFacet[]; authors: import("@shared/api").SearchFacet[] };
+  loading: boolean;
+  error: string | null;
+  tookMs: number | null;
+}
+
 export interface TagsState {
   current: import("@shared/api").TagPageData | null;
   loading: boolean;
@@ -248,6 +259,7 @@ export interface RootState {
   ui: UiState;
   search: SearchState;
   tags: TagsState;
+  searchPage: SearchPageState;
   revisions: RevisionsState;
   adminAudit: AdminAuditState;
 }
