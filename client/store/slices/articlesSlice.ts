@@ -33,6 +33,7 @@ const initialState: ArticlesState = {
   categoryPagePagination: null,
   categoryPageLoading: false,
   categoryPageError: null,
+  categoryRedirect: null,
   redirectSlug: null,
 };
 
@@ -140,6 +141,9 @@ export const fetchCategoryPage = createAsyncThunk(
       );
       return { ...data.data, slug, page, subcategory: subcategory ?? null };
     } catch (err: any) {
+      if (err.response?.data?.redirect) {
+        return rejectWithValue({ redirect: String(err.response.data.redirect) });
+      }
       return rejectWithValue(
         err.response?.data?.message ?? "Failed to fetch category",
       );
@@ -226,6 +230,7 @@ const articlesSlice = createSlice({
       .addCase(fetchCategoryPage.pending, (state) => {
         state.categoryPageLoading = true;
         state.categoryPageError = null;
+        state.categoryRedirect = null;
       })
       .addCase(fetchCategoryPage.fulfilled, (state, action) => {
         state.categoryPageLoading = false;
@@ -239,7 +244,13 @@ const articlesSlice = createSlice({
       })
       .addCase(fetchCategoryPage.rejected, (state, action) => {
         state.categoryPageLoading = false;
-        state.categoryPageError = action.payload as string;
+        const p = action.payload as string | { redirect: string } | undefined;
+        if (p && typeof p === "object" && "redirect" in p) {
+          state.categoryRedirect = p.redirect;
+          state.categoryPageError = null;
+        } else {
+          state.categoryPageError = (p as string) ?? "Error";
+        }
       });
   },
 });

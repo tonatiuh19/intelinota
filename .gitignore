@@ -29,3 +29,6 @@ dist-ssr
 !.env.example
 database/export/
 .vercel
+
+# Agent worktrees
+.claude/worktrees/

@@ -48,6 +48,8 @@ export interface ArticlesState {
   } | null;
   categoryPageLoading: boolean;
   categoryPageError: string | null;
+  /** Set when the requested section slug was renamed */
+  categoryRedirect: string | null;
   /** New slug when the requested article was renamed (navigate + replace) */
   redirectSlug: string | null;
 }

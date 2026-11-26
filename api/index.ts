@@ -1234,9 +1234,17 @@ const handleGetCategoryPage: RequestHandler = async (req, res) => {
       ]);
 
     if (!(categoryRows as RowDataPacket[]).length) {
-      return res
-        .status(404)
-        .json({ success: false, message: "Category not found" });
+      // Renamed section? Point the client at the new slug.
+      const [redir] = await getPool().query<RowDataPacket[]>(
+        `SELECT c.slug FROM category_slug_redirects r JOIN categories c ON c.id = r.category_id
+         WHERE r.old_slug = ? LIMIT 1`,
+        [slug],
+      );
+      return res.status(404).json({
+        success: false,
+        message: "Category not found",
+        ...(redir[0]?.slug ? { redirect: String(redir[0].slug) } : {}),
+      });
     }
 
     const category = (categoryRows as RowDataPacket[])[0];
@@ -4190,6 +4198,20 @@ const handleAdminUpdateCategory: RequestHandler = async (req, res) => {
     if (!sets.length) return res.status(400).json({ success: false, message: "No fields to update" });
 
     await getPool().query<ResultSetHeader>(`UPDATE categories SET ${sets.join(", ")} WHERE id = ?`, [...vals, id]);
+    const newSlug = body.slug !== undefined ? String(vals[sets.indexOf("slug = ?")]) : null;
+    if (newSlug && newSlug !== prev.slug) {
+      try {
+        await getPool().query(
+          `INSERT INTO category_slug_redirects (old_slug, category_id) VALUES (?, ?)
+           ON DUPLICATE KEY UPDATE category_id = VALUES(category_id), created_at = CURRENT_TIMESTAMP`,
+          [prev.slug, id],
+        );
+        // The new slug is live: a redirect from it would loop
+        await getPool().query("DELETE FROM category_slug_redirects WHERE old_slug = ?", [newSlug]);
+      } catch (redirErr) {
+        console.error("category redirect insert failed:", redirErr);
+      }
+    }
     await audit(getPool(), {
       ...auditFrom(req),
       action: "category.update",
