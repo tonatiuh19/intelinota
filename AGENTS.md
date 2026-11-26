@@ -239,3 +239,13 @@ const formik = useFormik({
 - Import from `lucide-react`
 - If Lucide doesn't have a cool/engaging icon, use react-icons as alternative
 - Import from `react-icons` (e.g., `react-icons/fa`, `react-icons/bs`, etc.)
+
+## Remote MCP
+
+- Server: `POST /api/mcp` (Streamable HTTP, stateless, `enableJsonResponse`), OAuth 2.1 issuer/resource `${BASE_URL}/api/mcp`, scope `intelinota.newsroom`. Full docs: `mcp/README.md`.
+- **Permissions = the user's rights**: MCP tools MUST call the existing Express handlers via `invokeAsUser` (never re-implement permission logic or write SQL that bypasses handler rules). Admin-only tools prepend `requireAdmin`.
+- New tools: add the JSON schema to `api/_lib/mcpTools.ts` (snake_case, Spanish description that says *when* to use it, `readOnly`, `adminOnly`), then a `case` in `executeMcpTool`. Writes get `confirm` + `confirm_phrase=CONFIRM` automatically and must return a dry-run preview when not confirmed.
+- Keep `tools/list` Claude-safe: only `{ name, description, inputSchema }` (`mcpToolsListForClaude`, `sanitizeMcpJsonRpcForClaude`).
+- Tokens/codes are stored only as sha256; never log them. Every call writes `mcp_audit_logs`.
+- `@modelcontextprotocol/sdk` (1.31.0) and `markdown-it` (14.3.3) are pinned for CommonJS compatibility — run `npm run check:api-runtime` after any bump.
+- `vercel.json` rewrites `/.well-known/(oauth-…|openid-configuration)` to `/api/index.ts` before the SPA catch-all.

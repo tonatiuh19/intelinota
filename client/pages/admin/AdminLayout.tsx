@@ -66,7 +66,7 @@ const ALL_NAV_ITEMS = [
     to: "/admin/comments",
     icon: MessageSquare,
     label: "Comentarios",
-    adminOnly: true,
+    adminOnly: false,
   },
   {
     to: "/admin/categories",

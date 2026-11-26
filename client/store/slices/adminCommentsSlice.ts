@@ -1,114 +1,129 @@
-import { createSlice, createAsyncThunk } from "@reduxjs/toolkit";
-import axios from "axios";
-import type { AdminCommentsResponse } from "@shared/api";
-import type { AdminCommentsState, RootState } from "../types";
-
-const authHeader = (token: string) => ({ Authorization: `Bearer ${token}` });
+import { createSlice, createAsyncThunk, type PayloadAction } from "@reduxjs/toolkit";
+import axios from "@/lib/apiClient";
+import type { AdminComment, AdminCommentsResponse, CommentBulkAction, CommentStatus } from "@shared/api";
+import type { AdminCommentsQuery, AdminCommentsState, RootState } from "../types";
 
 const initialState: AdminCommentsState = {
   items: [],
   pagination: null,
-  status: "pending",
+  counts: { pending: 0, approved: 0, spam: 0, flagged_pending: 0 },
+  query: { status: "pending", q: "", flagged: false, sort: "recent", page: 1 },
   loading: false,
   error: null,
-  patching: false,
+  busyIds: [],
 };
 
 export const fetchAdminComments = createAsyncThunk(
   "adminComments/fetch",
-  async (
-    params: { status?: string; page?: number } = {},
-    { getState, rejectWithValue },
-  ) => {
-    const token = (getState() as RootState).adminAuth.token;
-    if (!token) return rejectWithValue("Not authenticated");
+  async (_: void, { getState, rejectWithValue, signal }) => {
+    const { query } = (getState() as RootState).adminComments;
     try {
-      const status = params.status ?? "pending";
-      const { data } = await axios.get<AdminCommentsResponse>(
-        "/api/admin/comments",
-        {
-          params: { status, page: params.page ?? 1 },
-          headers: authHeader(token),
+      const { data } = await axios.get<AdminCommentsResponse>("/api/admin/comments", {
+        signal,
+        params: {
+          status: query.status,
+          q: query.q || undefined,
+          flagged: query.flagged ? 1 : undefined,
+          sort: query.sort,
+          page: query.page,
+          limit: 25,
         },
-      );
-      return { ...data, status };
+      });
+      return data;
     } catch (err: any) {
-      return rejectWithValue(
-        err.response?.data?.message ?? "Failed to fetch comments",
-      );
+      return rejectWithValue(err.response?.data?.message ?? "No se pudieron cargar los comentarios");
     }
   },
 );
 
-export const patchAdminComment = createAsyncThunk(
-  "adminComments/patch",
-  async (
-    { id, status }: { id: number; status: string },
-    { getState, rejectWithValue, dispatch },
-  ) => {
-    const token = (getState() as RootState).adminAuth.token;
-    if (!token) return rejectWithValue("Not authenticated");
+/** Moderate one or many comments. Optimistic: rows leave the current tab at once. */
+export const moderateComments = createAsyncThunk(
+  "adminComments/moderate",
+  async ({ ids, action }: { ids: number[]; action: CommentBulkAction }, { dispatch, rejectWithValue }) => {
     try {
-      await axios.patch(
-        `/api/admin/comments/${id}`,
-        { status },
-        { headers: authHeader(token) },
-      );
-      const currentStatus = (getState() as RootState).adminComments.status;
-      dispatch(fetchAdminComments({ status: currentStatus }));
-      return id;
+      await axios.post("/api/admin/comments/bulk", { ids, action });
+      dispatch(fetchAdminComments());
+      return { ids, action };
     } catch (err: any) {
-      return rejectWithValue(
-        err.response?.data?.message ?? "Failed to update comment",
-      );
+      dispatch(fetchAdminComments());
+      return rejectWithValue(err.response?.data?.message ?? "No se pudo moderar");
     }
   },
 );
+
+export const replyToComment = createAsyncThunk(
+  "adminComments/reply",
+  async ({ id, content }: { id: number; content: string }, { dispatch, rejectWithValue }) => {
+    try {
+      await axios.post(`/api/admin/comments/${id}/reply`, { content });
+      dispatch(fetchAdminComments());
+      return id;
+    } catch (err: any) {
+      return rejectWithValue(err.response?.data?.message ?? "No se pudo responder");
+    }
+  },
+);
+
+const ACTION_STATUS: Record<CommentBulkAction, CommentStatus | null> = {
+  approve: "approved",
+  spam: "spam",
+  pending: "pending",
+  delete: null,
+};
 
 const adminCommentsSlice = createSlice({
   name: "adminComments",
   initialState,
   reducers: {
-    setCommentsStatus(state, action) {
-      state.status = action.payload;
+    setCommentsQuery(state, action: PayloadAction<Partial<AdminCommentsQuery>>) {
+      const resetPage = !("page" in action.payload);
+      state.query = { ...state.query, ...action.payload, ...(resetPage ? { page: 1 } : {}) };
     },
   },
-  extraReducers: (builder) => {
-    builder
-      .addCase(fetchAdminComments.pending, (s) => {
-        s.loading = true;
-        s.error = null;
-      })
+  extraReducers: (b) => {
+    b.addCase(fetchAdminComments.pending, (s) => {
+      s.loading = true;
+      s.error = null;
+    })
       .addCase(fetchAdminComments.fulfilled, (s, a) => {
         s.loading = false;
         s.items = a.payload.data;
         s.pagination = a.payload.pagination;
-        s.status = a.payload.status;
+        s.counts = a.payload.counts ?? s.counts;
       })
       .addCase(fetchAdminComments.rejected, (s, a) => {
+        if (a.meta.aborted) return;
         s.loading = false;
-        s.error = a.payload as string;
+        s.error = (a.payload as string) ?? "Error";
       })
-      .addCase(patchAdminComment.pending, (s) => {
-        s.patching = true;
+      .addCase(moderateComments.pending, (s, a) => {
+        const { ids, action } = a.meta.arg;
+        s.busyIds.push(...ids);
+        const next = ACTION_STATUS[action];
+        // Optimistic: drop rows that no longer belong in this tab
+        s.items = s.items
+          .map((c): AdminComment => (ids.includes(c.id) && next ? { ...c, status: next } : c))
+          .filter((c) => !ids.includes(c.id) || (next !== null && (s.query.status === "all" || s.query.status === next)));
       })
-      .addCase(patchAdminComment.fulfilled, (s) => {
-        s.patching = false;
+      .addCase(moderateComments.fulfilled, (s, a) => {
+        s.busyIds = s.busyIds.filter((id) => !a.payload.ids.includes(id));
       })
-      .addCase(patchAdminComment.rejected, (s) => {
-        s.patching = false;
+      .addCase(moderateComments.rejected, (s, a) => {
+        s.busyIds = s.busyIds.filter((id) => !a.meta.arg.ids.includes(id));
+        s.error = (a.payload as string) ?? "Error";
+      })
+      .addCase(replyToComment.pending, (s, a) => {
+        s.busyIds.push(a.meta.arg.id);
+      })
+      .addCase(replyToComment.fulfilled, (s, a) => {
+        s.busyIds = s.busyIds.filter((id) => id !== a.payload);
+      })
+      .addCase(replyToComment.rejected, (s, a) => {
+        s.busyIds = s.busyIds.filter((id) => id !== a.meta.arg.id);
+        s.error = (a.payload as string) ?? "Error";
       });
   },
 });
 
-export const { setCommentsStatus } = adminCommentsSlice.actions;
+export const { setCommentsQuery } = adminCommentsSlice.actions;
 export default adminCommentsSlice.reducer;
-
-export const selectAdminComments = (s: RootState) => s.adminComments.items;
-export const selectAdminCommentsLoading = (s: RootState) =>
-  s.adminComments.loading;
-export const selectAdminCommentsError = (s: RootState) => s.adminComments.error;
-export const selectAdminCommentsStatus = (s: RootState) =>
-  s.adminComments.status;
-export const selectAdminCommentsPagination = (s: RootState) =>
-  s.adminComments.pagination;

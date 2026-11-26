@@ -21,6 +21,7 @@ import {
 } from "@/components/ui/collapsible";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import ImageUploadCrop from "@/components/ImageUploadCrop";
+import McpConnectionsCard from "@/components/admin/McpConnectionsCard";
 import {
   User,
   Save,
@@ -408,6 +409,8 @@ export default function Profile() {
           </Button>
         </div>
       </form>
+
+      <McpConnectionsCard />
     </div>
   );
 }

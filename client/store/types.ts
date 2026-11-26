@@ -112,6 +112,14 @@ export interface AdminAuthorsState {
   deleteError: string | null;
 }
 
+export interface AdminCommentsQuery {
+  status: "pending" | "approved" | "spam" | "all";
+  q: string;
+  flagged: boolean;
+  sort: "recent" | "oldest" | "risk";
+  page: number;
+}
+
 export interface AdminCommentsState {
   items: import("@shared/api").AdminComment[];
   pagination: {
@@ -120,10 +128,12 @@ export interface AdminCommentsState {
     total: number;
     totalPages: number;
   } | null;
-  status: string;
+  counts: import("@shared/api").AdminCommentCounts;
+  query: AdminCommentsQuery;
   loading: boolean;
   error: string | null;
-  patching: boolean;
+  /** ids with an in-flight action */
+  busyIds: number[];
 }
 
 export interface AdminCategoriesState {
@@ -268,6 +278,18 @@ export interface NotificationsState {
   lastFetchedAt: number | null;
 }
 
+export interface AdminMcpState {
+  consent: import("@shared/api").McpConsentInfo | null;
+  consentLoading: boolean;
+  consentError: string | null;
+  deciding: boolean;
+  connectorUrl: string | null;
+  connections: import("@shared/api").McpConnection[];
+  connectionsLoading: boolean;
+  connectionsError: string | null;
+  revokingId: number | null;
+}
+
 export interface RootState {
   articles: ArticlesState;
   categories: CategoriesState;
@@ -294,4 +316,5 @@ export interface RootState {
   adminAudit: AdminAuditState;
   adminReviews: AdminReviewsState;
   notifications: NotificationsState;
+  adminMcp: AdminMcpState;
 }
