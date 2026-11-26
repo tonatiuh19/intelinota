@@ -147,8 +147,7 @@
   }
 
   :where(p, span, li, h1, h2, h3, h4, h5, h6, a, button, label, td, th) {
-    overflow-wrap: anywhere;
-    word-break: break-word;
+    overflow-wrap: break-word;
   }
 
   pre,
@@ -221,16 +220,35 @@
 .article-content {
   font-family: theme("fontFamily.body");
   font-size: 1.125rem;
-  line-height: 1.75;
-  color: hsl(var(--foreground) / 0.9);
-  max-width: var(--measure);
+  line-height: 1.72;
+  color: hsl(var(--foreground) / 0.88);
+  max-width: 100%;
   font-feature-settings: "kern", "liga", "onum";
-  hyphens: auto;
+  /* No auto-hyphenation: it split words like "Chi-vas" in headings */
+  hyphens: manual;
+  overflow-wrap: break-word;
+  text-wrap: pretty;
 }
 @media (min-width: 768px) {
   .article-content {
-    font-size: 1.25rem;
+    font-size: 1.1875rem;
+    line-height: 1.75;
   }
+}
+.article-content p {
+  margin-top: 1.4em;
+}
+.article-content > p:first-child,
+.article-content > :first-child {
+  margin-top: 0;
+}
+.article-content h2 {
+  padding-top: 0.6em;
+  border-top: 1px solid hsl(var(--border));
+}
+.article-content img,
+.article-content figure {
+  border-radius: 0.75rem;
 }
 .article-content > * + * {
   margin-top: 1.25em;

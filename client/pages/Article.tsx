@@ -11,6 +11,7 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import ArticleCard from "@/components/ArticleCard";
+import ArticleToc, { useArticleToc } from "@/components/ArticleToc";
 import NewsletterForm from "@/components/NewsletterForm";
 import { formatDate, formatRelative } from "@/lib/format";
 import { articleImageSrcSet, IMAGE_SIZES } from "@/lib/images";
@@ -75,6 +76,27 @@ export default function Article() {
   const commentsPostMessage = useAppSelector(selectCommentsPostMessage);
   const { toast } = useToast();
   const [bookmarked, setBookmarked] = useState(false);
+  const [readProgress, setReadProgress] = useState(0);
+  const toc = useArticleToc(".article-body", [blocks]);
+
+  // Reading progress through the article body (drives TOC + time left)
+  useEffect(() => {
+    const onScroll = () => {
+      const el = document.querySelector<HTMLElement>(".article-body");
+      if (!el) return;
+      const rect = el.getBoundingClientRect();
+      const total = rect.height - window.innerHeight * 0.6;
+      const read = Math.min(Math.max(-rect.top + window.innerHeight * 0.3, 0), Math.max(total, 1));
+      setReadProgress(total > 0 ? read / total : 1);
+    };
+    onScroll();
+    window.addEventListener("scroll", onScroll, { passive: true });
+    window.addEventListener("resize", onScroll);
+    return () => {
+      window.removeEventListener("scroll", onScroll);
+      window.removeEventListener("resize", onScroll);
+    };
+  }, [blocks]);
 
   useEffect(() => {
     if (slug) {
@@ -196,9 +218,10 @@ export default function Article() {
     ...tags.map((t) => t.name),
   ].filter(Boolean) as string[];
   const moreFromSection = related.slice(0, 3);
-  const recommended = (trending.length ? trending : related)
-    .filter((a) => a.id !== article.id)
-    .slice(0, 5);
+  const moreIds = new Set(moreFromSection.map((a) => a.id));
+  const recommended = [...trending, ...related]
+    .filter((a, i, arr) => a.id !== article.id && !moreIds.has(a.id) && arr.findIndex((x) => x.id === a.id) === i)
+    .slice(0, 4);
 
   const shareButtons = [
     { key: "x" as const, label: "Compartir en X", icon: FaXTwitter },
@@ -206,6 +229,8 @@ export default function Article() {
     { key: "whatsapp" as const, label: "Compartir en WhatsApp", icon: FaWhatsapp },
     { key: "linkedin" as const, label: "Compartir en LinkedIn", icon: FaLinkedinIn },
   ];
+
+  const minutesLeft = Math.max(1, Math.ceil(article.read_time_minutes * (1 - readProgress)));
 
   const railButton =
     "inline-flex h-10 w-10 items-center justify-center rounded-full border text-muted-foreground transition-colors hover:border-foreground hover:text-foreground";
@@ -246,10 +271,15 @@ export default function Article() {
         )}
       />
 
-      {/* ── Header ───────────────────────────────────────────── */}
-      <header className="container px-4 pt-8 sm:px-6 sm:pt-12 lg:px-8">
-        <div className="mx-auto max-w-3xl text-center">
-          <nav aria-label="Ruta" className="flex items-center justify-center gap-2 text-xs">
+      {/*
+        Layout: one centered reading column (max 720px). On xl screens a
+        share rail sits to its left and the TOC to its right, both sticky.
+        Header, hero and body all share the same center axis.
+      */}
+      <div className="container px-4 sm:px-6 lg:px-8">
+        {/* ── Header ───────────────────────────────────────────── */}
+        <header className="mx-auto max-w-[720px] pt-8 sm:pt-14">
+          <nav aria-label="Ruta" className="flex flex-wrap items-center gap-2 text-xs">
             <Link to={categoryUrlPath(article.category_slug)} className="kicker hover:underline">
               {article.category_name}
             </Link>
@@ -260,222 +290,231 @@ export default function Article() {
               </>
             )}
           </nav>
-          <h1 className="mt-4 font-display text-display-xl font-bold text-balance">
+          <h1 className="mt-4 font-display text-[2rem] font-bold leading-[1.08] tracking-[-0.02em] text-balance sm:text-[2.75rem] lg:text-[3.25rem]">
             {article.title}
           </h1>
           {article.excerpt && (
-            <p className="mx-auto mt-5 max-w-2xl font-body text-lg leading-relaxed text-muted-foreground text-pretty sm:text-xl">
+            <p className="mt-5 font-body text-lg leading-relaxed text-muted-foreground text-pretty sm:text-[1.3rem] sm:leading-[1.55]">
               {article.excerpt}
             </p>
           )}
-          <div className="mt-7 flex flex-col items-center justify-center gap-3 border-y py-4 sm:flex-row sm:gap-5">
-            <Link to={`/autor/${article.author_slug}`} className="group flex items-center gap-3">
-              <Avatar className="h-10 w-10">
+
+          <div className="mt-8 flex flex-wrap items-center gap-x-4 gap-y-3 border-y py-4">
+            <Link to={`/autor/${article.author_slug}`} className="group flex min-w-0 items-center gap-3">
+              <Avatar className="h-11 w-11 ring-2 ring-background">
                 <AvatarImage src={authorProfile?.avatar_url ?? undefined} alt="" />
-                <AvatarFallback className="font-display font-bold">
-                  {article.author_name[0]}
-                </AvatarFallback>
+                <AvatarFallback className="font-display font-bold">{article.author_name[0]}</AvatarFallback>
               </Avatar>
-              <span className="text-left text-sm">
-                <span className="block font-semibold group-hover:underline">
-                  Por {article.author_name}
+              <span className="min-w-0 text-sm">
+                <span className="block truncate font-semibold group-hover:underline">{article.author_name}</span>
+                <span className="text-muted-foreground">
+                  <time dateTime={article.published_at ?? undefined}>{formatDate(article.published_at)}</time>
+                  {" · "}
+                  {article.read_time_minutes} min de lectura
                 </span>
-                <time dateTime={article.published_at ?? undefined} className="text-muted-foreground">
-                  {formatDate(article.published_at)} · {article.read_time_minutes} min de lectura
-                </time>
               </span>
             </Link>
-            <div className="flex items-center gap-1 sm:ml-auto lg:hidden">
+            <div className="ml-auto hidden items-center gap-1 sm:flex">
               <button type="button" onClick={handleShare} aria-label="Compartir" className={railButton}>
                 <Share2 className="h-4 w-4" />
+              </button>
+              <button type="button" onClick={copyLink} aria-label="Copiar enlace" className={cn(railButton, "hidden sm:inline-flex")}>
+                <Link2 className="h-4 w-4" />
               </button>
               <button
                 type="button"
                 onClick={handleBookmark}
                 aria-label={bookmarked ? "Quitar de favoritos" : "Guardar"}
                 aria-pressed={bookmarked}
-                className={cn(railButton, bookmarked && "border-foreground text-foreground")}
+                className={cn(railButton, bookmarked && "border-brand bg-brand text-brand-foreground hover:text-brand-foreground")}
               >
                 <Bookmark className={cn("h-4 w-4", bookmarked && "fill-current")} />
               </button>
             </div>
           </div>
-        </div>
-      </header>
+        </header>
 
-      {/* ── Hero art ─────────────────────────────────────────── */}
-      {article.image_url && (
-        <figure className="container mt-8 px-0 sm:px-6 lg:px-8">
-          <div className="mx-auto aspect-[16/9] max-w-6xl overflow-hidden bg-muted">
-            <img
-              src={articleImageUrl(article.image_url)}
-              srcSet={articleImageSrcSet(article.image_url)}
-              sizes={IMAGE_SIZES.hero}
-              alt={article.excerpt ?? article.title}
-              // @ts-expect-error — valid HTML attribute
-              fetchpriority="high"
-              decoding="async"
-              className="h-full w-full object-cover"
-            />
-          </div>
-        </figure>
-      )}
-
-      {/* ── Body ─────────────────────────────────────────────── */}
-      <div className="container mt-10 grid grid-cols-1 gap-12 px-4 sm:px-6 lg:mt-14 lg:grid-cols-12 lg:px-8">
-        {/* Share rail (desktop) */}
-        <aside className="hidden lg:col-span-1 lg:block" aria-label="Compartir">
-          <div className="sticky top-24 flex flex-col items-center gap-2">
-            {shareButtons.map(({ key, label, icon: Icon }) => (
-              <button key={key} type="button" onClick={() => shareTo(key)} aria-label={label} className={railButton}>
-                <Icon className="h-4 w-4" />
-              </button>
-            ))}
-            <button type="button" onClick={copyLink} aria-label="Copiar enlace" className={railButton}>
-              <Link2 className="h-4 w-4" />
-            </button>
-            <span className="my-1 h-px w-6 bg-border" />
-            <button
-              type="button"
-              onClick={handleBookmark}
-              aria-label={bookmarked ? "Quitar de favoritos" : "Guardar"}
-              aria-pressed={bookmarked}
-              className={cn(railButton, bookmarked && "border-foreground bg-foreground text-background hover:text-background")}
-            >
-              <Bookmark className={cn("h-4 w-4", bookmarked && "fill-current")} />
-            </button>
-            <a href="#comentarios" aria-label="Ir a comentarios" className={railButton}>
-              <MessageCircle className="h-4 w-4" />
-            </a>
-          </div>
-        </aside>
-
-        <div className="min-w-0 lg:col-span-7">
-          <div className="space-y-8">
-            {blocks.map((block, i) => (
-              <ArticleBlock key={block.id} block={block} dropCap={i === 0} />
-            ))}
-          </div>
-
-          {tags.length > 0 && (
-            <ul className="mt-12 flex flex-wrap gap-2" aria-label="Temas">
-              {tags.map((t) => (
-                <li key={t.id}>
-                  <Link
-                    to={`/tema/${t.slug}`}
-                    className="inline-flex h-10 items-center rounded-full border px-4 text-sm font-medium transition-colors hover:border-foreground"
-                  >
-                    {t.name}
-                  </Link>
-                </li>
-              ))}
-            </ul>
-          )}
-
-          {/* Author box */}
-          <section className="rule-top mt-12 flex flex-col gap-5 pt-6 sm:flex-row" aria-label="Sobre el autor">
-            <Avatar className="h-16 w-16 shrink-0">
-              <AvatarImage src={authorProfile?.avatar_url ?? undefined} alt="" />
-              <AvatarFallback className="font-display text-xl font-bold">
-                {article.author_name[0]}
-              </AvatarFallback>
-            </Avatar>
-            <div className="space-y-2">
-              <p className="kicker !text-muted-foreground">Sobre el autor</p>
-              <Link to={`/autor/${article.author_slug}`} className="font-display text-xl font-bold hover:underline">
-                {article.author_name}
-              </Link>
-              <p className="font-body text-[15px] leading-relaxed text-muted-foreground">
-                {authorProfile?.bio ?? `${article.author_name} escribe para INTELINOTA.`}
-              </p>
+        {/* ── Hero art: breaks out of the column, same center axis ── */}
+        {article.image_url && (
+          <figure className="mx-auto mt-8 max-w-[1080px] sm:mt-10">
+            <div className="-mx-4 aspect-[16/9] overflow-hidden bg-muted sm:mx-0 sm:rounded-xl">
+              <img
+                src={articleImageUrl(article.image_url)}
+                srcSet={articleImageSrcSet(article.image_url)}
+                sizes="(min-width: 1120px) 1080px, 100vw"
+                alt={article.excerpt ?? article.title}
+                // @ts-expect-error — valid HTML attribute
+                fetchpriority="high"
+                decoding="async"
+                className="h-full w-full object-cover"
+              />
             </div>
-          </section>
+          </figure>
+        )}
 
-          {/* End-of-article newsletter */}
-          <section className="mt-12 bg-foreground p-6 text-background sm:p-8">
-            <p className="kicker !text-background/70">Boletín diario</p>
-            <p className="mt-2 font-display text-2xl font-bold leading-tight">
-              ¿Te gustó esta historia? Recibe las mejores cada mañana.
-            </p>
-            <NewsletterForm variant="inline" source="article_end" className="mt-5 max-w-md" />
-          </section>
-
-          {/* Comments */}
-          <section id="comentarios" className="mt-14 scroll-mt-24 space-y-6" aria-labelledby="comments-h">
-            <h2 id="comments-h" className="rule-top pt-3 font-display text-2xl font-bold">
-              Comentarios
-              {!commentsLoading && comments.length > 0 && (
-                <span className="ml-2 text-base font-normal text-muted-foreground">
-                  ({comments.length})
-                </span>
-              )}
-            </h2>
-
-            {commentsPostMessage && (
-              <Alert>
-                <AlertDescription>{commentsPostMessage}</AlertDescription>
-              </Alert>
-            )}
-            {commentsError && (
-              <Alert variant="destructive">
-                <AlertDescription>{commentsError}</AlertDescription>
-              </Alert>
-            )}
-
-            {commentsLoading ? (
-              <div className="space-y-3">
-                <Skeleton className="h-16 w-full" />
-                <Skeleton className="h-16 w-full" />
+        {/* ── Body with rails ─────────────────────────────────── */}
+        <div className="relative mx-auto mt-10 grid max-w-[1200px] grid-cols-1 sm:mt-14 xl:grid-cols-[200px_minmax(0,720px)_200px] xl:justify-center xl:gap-x-10">
+          {/* Left rail: share (xl) */}
+          <aside className="hidden xl:block" aria-label="Compartir">
+            <div className="sticky top-28 flex flex-col items-end gap-2">
+              <p className="kicker mb-1 !text-muted-foreground">Compartir</p>
+              <div className="flex flex-col gap-2">
+                {shareButtons.map(({ key, label, icon: Icon }) => (
+                  <button key={key} type="button" onClick={() => shareTo(key)} aria-label={label} className={railButton}>
+                    <Icon className="h-4 w-4" />
+                  </button>
+                ))}
+                <button type="button" onClick={copyLink} aria-label="Copiar enlace" className={railButton}>
+                  <Link2 className="h-4 w-4" />
+                </button>
+                <a href="#comentarios" aria-label="Ir a comentarios" className={railButton}>
+                  <MessageCircle className="h-4 w-4" />
+                </a>
               </div>
-            ) : comments.length === 0 ? (
-              <p className="font-body text-muted-foreground">Sé el primero en comentar esta historia.</p>
-            ) : (
-              <ul className="divide-y">
-                {comments.map((comment) => (
-                  <li key={comment.id} className={cn("py-5", comment.parent_id && "ml-6 border-l pl-5")}>
-                    <div className="flex items-center gap-3">
-                      <span className="flex h-8 w-8 items-center justify-center rounded-full bg-muted font-display text-sm font-bold">
-                        {comment.author_name?.[0]?.toUpperCase() ?? "?"}
-                      </span>
-                      <span className="text-sm font-semibold">{comment.author_name}</span>
-                      <time dateTime={comment.created_at} className="text-xs text-muted-foreground">
-                        {formatRelative(comment.created_at)}
-                      </time>
-                    </div>
-                    <p className="mt-2 whitespace-pre-wrap pl-11 font-body text-[15px] leading-relaxed">
-                      {comment.content}
-                    </p>
+            </div>
+          </aside>
+
+          {/* Reading column */}
+          <div className="article-body min-w-0">
+            {toc.items.length > 2 && (
+              <details className="group mb-10 rounded-xl border bg-card xl:hidden">
+                <summary className="flex h-12 cursor-pointer list-none items-center justify-between px-4 font-sans text-sm font-semibold [&::-webkit-details-marker]:hidden">
+                  <span>En este artículo · {toc.items.length} secciones</span>
+                  <span aria-hidden className="text-muted-foreground transition-transform group-open:rotate-180">⌄</span>
+                </summary>
+                <div className="border-t px-4 pb-4 pt-3">
+                  <ArticleToc items={toc.items} activeId={toc.activeId} progress={readProgress} minutesLeft={minutesLeft} />
+                </div>
+              </details>
+            )}
+            <div className="space-y-8">
+              {blocks.map((block, i) => (
+                <ArticleBlock key={block.id} block={block} dropCap={i === 0} />
+              ))}
+            </div>
+
+            {tags.length > 0 && (
+              <ul className="mt-12 flex flex-wrap gap-2" aria-label="Temas">
+                {tags.map((t) => (
+                  <li key={t.id}>
+                    <Link
+                      to={`/tema/${t.slug}`}
+                      className="inline-flex h-10 items-center rounded-full border px-4 text-sm font-medium transition-colors hover:border-brand hover:text-brand"
+                    >
+                      #{t.name}
+                    </Link>
                   </li>
                 ))}
               </ul>
             )}
 
-            {slug && <CommentForm slug={slug} />}
-          </section>
-        </div>
+            {/* Author box */}
+            <section className="mt-12 flex flex-col gap-5 rounded-xl border bg-card p-6 sm:flex-row" aria-label="Sobre el autor">
+              <Avatar className="h-16 w-16 shrink-0">
+                <AvatarImage src={authorProfile?.avatar_url ?? undefined} alt="" />
+                <AvatarFallback className="font-display text-xl font-bold">{article.author_name[0]}</AvatarFallback>
+              </Avatar>
+              <div className="space-y-2">
+                <p className="kicker !text-muted-foreground">Sobre el autor</p>
+                <Link to={`/autor/${article.author_slug}`} className="font-display text-xl font-bold hover:underline">
+                  {article.author_name}
+                </Link>
+                <p className="font-body text-[15px] leading-relaxed text-muted-foreground">
+                  {authorProfile?.bio ?? `${article.author_name} escribe para INTELINOTA.`}
+                </p>
+                <Link
+                  to={`/autor/${article.author_slug}`}
+                  className="inline-flex h-10 items-center text-sm font-semibold text-brand hover:underline"
+                >
+                  Más historias de {article.author_name.split(" ")[0]} →
+                </Link>
+              </div>
+            </section>
 
-        {/* Sidebar */}
-        <aside className="space-y-10 lg:col-span-4 lg:border-l lg:pl-8">
-          <div className="sticky top-24 space-y-10">
-            {recommended.length > 0 && (
-              <section aria-labelledby="rec-h">
-                <h2 id="rec-h" className="rule-top mb-1 pt-3 font-display text-xl font-bold">
-                  Recomendado
-                </h2>
-                <div className="divide-y">
-                  {recommended.map((a) => (
-                    <ArticleCard key={a.id} article={a} variant="compact" />
-                  ))}
+            {/* End-of-article newsletter */}
+            <section className="mt-10 overflow-hidden rounded-xl bg-foreground p-6 text-background sm:p-8">
+              <p className="kicker !text-background/70">Boletín diario</p>
+              <p className="mt-2 font-display text-2xl font-bold leading-tight">
+                ¿Te gustó esta historia? Recibe las mejores cada mañana.
+              </p>
+              <NewsletterForm variant="inline" source="article_end" className="mt-5 max-w-md" />
+            </section>
+
+            {/* Comments */}
+            <section id="comentarios" className="mt-14 scroll-mt-28 space-y-6" aria-labelledby="comments-h">
+              <h2 id="comments-h" className="rule-top pt-3 font-display text-2xl font-bold">
+                Comentarios
+                {!commentsLoading && comments.length > 0 && (
+                  <span className="ml-2 text-base font-normal text-muted-foreground">({comments.length})</span>
+                )}
+              </h2>
+              {commentsPostMessage && (
+                <Alert>
+                  <AlertDescription>{commentsPostMessage}</AlertDescription>
+                </Alert>
+              )}
+              {commentsError && (
+                <Alert variant="destructive">
+                  <AlertDescription>{commentsError}</AlertDescription>
+                </Alert>
+              )}
+              {commentsLoading ? (
+                <div className="space-y-3">
+                  <Skeleton className="h-16 w-full" />
+                  <Skeleton className="h-16 w-full" />
                 </div>
-              </section>
-            )}
+              ) : comments.length === 0 ? (
+                <p className="font-body text-muted-foreground">Sé el primero en comentar esta historia.</p>
+              ) : (
+                <ul className="divide-y">
+                  {comments.map((comment) => (
+                    <li key={comment.id} className={cn("py-5", comment.parent_id && "ml-6 border-l pl-5")}>
+                      <div className="flex items-center gap-3">
+                        <span className="flex h-8 w-8 items-center justify-center rounded-full bg-muted font-display text-sm font-bold">
+                          {comment.author_name?.[0]?.toUpperCase() ?? "?"}
+                        </span>
+                        <span className="text-sm font-semibold">{comment.author_name}</span>
+                        <time dateTime={comment.created_at} className="text-xs text-muted-foreground">
+                          {formatRelative(comment.created_at)}
+                        </time>
+                      </div>
+                      <p className="mt-2 whitespace-pre-wrap pl-11 font-body text-[15px] leading-relaxed">{comment.content}</p>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {slug && <CommentForm slug={slug} />}
+            </section>
           </div>
-        </aside>
+
+          {/* Right rail: table of contents + reading progress (xl) */}
+          <aside className="hidden xl:block">
+            <div className="sticky top-28">
+              <ArticleToc items={toc.items} activeId={toc.activeId} progress={readProgress} minutesLeft={minutesLeft} />
+            </div>
+          </aside>
+        </div>
       </div>
+
+      {/* ── Keep reading ─────────────────────────────────────── */}
+      {recommended.length > 0 && (
+        <section className="container mt-20 px-4 sm:px-6 lg:px-8" aria-labelledby="rec-h">
+          <div className="mx-auto max-w-[1180px]">
+            <div className="rule-top mb-6 flex items-baseline justify-between pt-3">
+              <h2 id="rec-h" className="font-display text-2xl font-bold">Sigue leyendo</h2>
+            </div>
+            <div className="grid grid-cols-1 gap-8 sm:grid-cols-2 lg:grid-cols-4">
+              {recommended.slice(0, 4).map((a) => (
+                <ArticleCard key={a.id} article={a} variant="grid" />
+              ))}
+            </div>
+          </div>
+        </section>
+      )}
 
       {/* More from section */}
       {moreFromSection.length > 0 && (
-        <section className="container mt-20 px-4 sm:px-6 lg:px-8" aria-labelledby="more-h">
+        <section className="container mx-auto mt-16 max-w-[1180px] px-4 sm:px-6 lg:px-8" aria-labelledby="more-h">
           <div className="rule-top mb-6 flex items-baseline justify-between pt-3">
             <h2 id="more-h" className="font-display text-2xl font-bold">
               Más de {article.category_name}
