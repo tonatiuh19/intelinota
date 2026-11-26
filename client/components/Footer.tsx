@@ -21,7 +21,7 @@ const ABOUT_LINKS = [
   { to: "/about", label: "Nuestra historia" },
   { to: "/autores", label: "Autores" },
   { to: "/team", label: "El equipo" },
-  { to: "/favoritos", label: "Favoritos" },
+  { to: "/favoritos", label: "Guardados" },
   { to: "/contact", label: "Contacto" },
   { to: "/privacy", label: "Privacidad" },
 ];

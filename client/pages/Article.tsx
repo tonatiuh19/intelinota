@@ -55,7 +55,7 @@ import { categoryUrlPath } from "@/lib/categorySlugs";
 import ArticleBlock from "@/components/ArticleBlock";
 import ReadingProgress from "@/components/ReadingProgress";
 import { articleImageUrl } from "@/lib/images";
-import { sharePage, toggleBookmark, isBookmarked } from "@/lib/share";
+import { sharePage, toggleBookmark, isBookmarked, setBookmarkRead } from "@/lib/share";
 import { useToast } from "@/hooks/use-toast";
 
 export default function Article() {
@@ -78,6 +78,12 @@ export default function Article() {
   const [bookmarked, setBookmarked] = useState(false);
   const [readProgress, setReadProgress] = useState(0);
   const toc = useArticleToc(".article-body", [blocks]);
+  const reachedEnd = readProgress >= 0.9;
+
+  // Saved articles are marked read once the reader reaches the end
+  useEffect(() => {
+    if (reachedEnd && bookmarked && slug) setBookmarkRead(slug, true);
+  }, [reachedEnd, bookmarked, slug]);
 
   // Reading progress through the article body (drives TOC + time left)
   useEffect(() => {

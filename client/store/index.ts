@@ -18,6 +18,7 @@ import uiReducer from "./slices/uiSlice";
 import searchReducer from "./slices/searchSlice";
 import tagsReducer from "./slices/tagsSlice";
 import searchPageReducer from "./slices/searchPageSlice";
+import bookmarksReducer from "./slices/bookmarksSlice";
 import revisionsReducer from "./slices/revisionsSlice";
 import adminAuditReducer from "./slices/adminAuditSlice";
 import type { RootState } from "./types";
@@ -43,6 +44,7 @@ export const store = configureStore({
     search: searchReducer,
     tags: tagsReducer,
     searchPage: searchPageReducer,
+    bookmarks: bookmarksReducer,
     revisions: revisionsReducer,
     adminAudit: adminAuditReducer,
   },
