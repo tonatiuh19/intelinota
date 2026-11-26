@@ -14,8 +14,10 @@ const initialState: AdminArticlesState = {
   error: null,
   current: null,
   currentLoading: false,
+  currentError: null,
   saving: false,
   saveError: null,
+  deleteError: null,
   featuredCount: null,
 };
 
@@ -176,13 +178,17 @@ const adminArticlesSlice = createSlice({
     builder
       .addCase(fetchAdminArticle.pending, (s) => {
         s.currentLoading = true;
+        s.currentError = null;
       })
       .addCase(fetchAdminArticle.fulfilled, (s, a) => {
         s.currentLoading = false;
         s.current = a.payload;
+        s.currentError = null;
       })
-      .addCase(fetchAdminArticle.rejected, (s) => {
+      .addCase(fetchAdminArticle.rejected, (s, a) => {
         s.currentLoading = false;
+        s.current = null;
+        s.currentError = a.payload as string;
       });
 
     builder
@@ -211,8 +217,15 @@ const adminArticlesSlice = createSlice({
         s.saveError = a.payload as string;
       });
 
+    builder.addCase(deleteAdminArticle.pending, (s) => {
+      s.deleteError = null;
+    });
     builder.addCase(deleteAdminArticle.fulfilled, (s, a) => {
       s.items = s.items.filter((i) => i.id !== a.payload);
+      s.deleteError = null;
+    });
+    builder.addCase(deleteAdminArticle.rejected, (s, a) => {
+      s.deleteError = a.payload as string;
     });
 
     builder.addCase(fetchFeaturedCount.fulfilled, (s, a) => {
@@ -228,12 +241,19 @@ export const selectAdminArticlesPagination = (s: RootState) =>
   s.adminArticles.pagination;
 export const selectAdminArticlesLoading = (s: RootState) =>
   s.adminArticles.loading;
+export const selectAdminArticlesError = (s: RootState) => s.adminArticles.error;
 export const selectAdminArticlesCurrent = (s: RootState) =>
   s.adminArticles.current;
 export const selectAdminArticlesSaving = (s: RootState) =>
   s.adminArticles.saving;
 export const selectAdminArticlesSaveError = (s: RootState) =>
   s.adminArticles.saveError;
+export const selectAdminArticlesCurrentLoading = (s: RootState) =>
+  s.adminArticles.currentLoading;
+export const selectAdminArticlesCurrentError = (s: RootState) =>
+  s.adminArticles.currentError;
+export const selectAdminArticlesDeleteError = (s: RootState) =>
+  s.adminArticles.deleteError;
 export const selectAdminArticlesFeaturedCount = (s: RootState) =>
   s.adminArticles.featuredCount;
 

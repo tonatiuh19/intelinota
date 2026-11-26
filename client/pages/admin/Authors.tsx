@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
+import { Navigate } from "react-router-dom";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
+import { selectAdminUser } from "@/store/slices/adminAuthSlice";
 import {
   fetchAdminAuthors,
   createAdminAuthor,
@@ -8,10 +10,18 @@ import {
   clearSaveError,
   selectAdminAuthors,
   selectAdminAuthorsLoading,
+  selectAdminAuthorsError,
   selectAdminAuthorsSaving,
   selectAdminAuthorsSaveError,
+  selectAdminAuthorsDeleteError,
 } from "@/store/slices/adminAuthorsSlice";
-import type { AdminAuthor, UpsertAuthorPayload, AdminRole } from "@shared/api";
+import type {
+  AdminAuthor,
+  UpsertAuthorPayload,
+  AdminRole,
+  SocialLinks,
+} from "@shared/api";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -43,7 +53,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Alert, AlertDescription } from "@/components/ui/alert";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -51,6 +60,11 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
 import {
   UserPlus,
   MoreHorizontal,
@@ -62,8 +76,16 @@ import {
   Twitter,
   Loader2,
   Mail,
+  Globe,
+  ChevronDown,
+  Facebook,
+  Instagram,
+  Linkedin,
+  Youtube,
 } from "lucide-react";
+import { FaTiktok } from "react-icons/fa";
 import { cn } from "@/lib/utils";
+import ImageUploadCrop from "@/components/ImageUploadCrop";
 
 // ── Slug helper ───────────────────────────────────────────────
 function toSlug(text: string): string {
@@ -87,6 +109,12 @@ interface AuthorForm {
   email: string;
   user_email: string;
   user_role: AdminRole;
+  social_facebook: string;
+  social_instagram: string;
+  social_linkedin: string;
+  social_youtube: string;
+  social_tiktok: string;
+  social_website: string;
 }
 
 const EMPTY_FORM: AuthorForm = {
@@ -98,9 +126,16 @@ const EMPTY_FORM: AuthorForm = {
   email: "",
   user_email: "",
   user_role: "author",
+  social_facebook: "",
+  social_instagram: "",
+  social_linkedin: "",
+  social_youtube: "",
+  social_tiktok: "",
+  social_website: "",
 };
 
 function authorToForm(a: AdminAuthor): AuthorForm {
+  const sl = (a.social_links ?? {}) as Record<string, string>;
   return {
     name: a.name,
     slug: a.slug,
@@ -110,31 +145,49 @@ function authorToForm(a: AdminAuthor): AuthorForm {
     email: a.email ?? "",
     user_email: a.email ?? "",
     user_role: (a.user_role as AdminRole) ?? "author",
+    social_facebook: sl.facebook ?? "",
+    social_instagram: sl.instagram ?? "",
+    social_linkedin: sl.linkedin ?? "",
+    social_youtube: sl.youtube ?? "",
+    social_tiktok: sl.tiktok ?? "",
+    social_website: sl.website ?? "",
   };
 }
 
 export default function AdminAuthors() {
+  const user = useAppSelector(selectAdminUser);
   const dispatch = useAppDispatch();
   const authors = useAppSelector(selectAdminAuthors);
   const loading = useAppSelector(selectAdminAuthorsLoading);
+  const listError = useAppSelector(selectAdminAuthorsError);
   const saving = useAppSelector(selectAdminAuthorsSaving);
   const saveError = useAppSelector(selectAdminAuthorsSaveError);
+  const deleteError = useAppSelector(selectAdminAuthorsDeleteError);
 
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingAuthor, setEditingAuthor] = useState<AdminAuthor | null>(null);
   const [deleteId, setDeleteId] = useState<number | null>(null);
   const [form, setForm] = useState<AuthorForm>(EMPTY_FORM);
   const [slugEdited, setSlugEdited] = useState(false);
+  // Stable upload ID per dialog session: reused if editing, new temp key if creating
+  const [uploadId, setUploadId] = useState<string>("");
 
   useEffect(() => {
-    dispatch(fetchAdminAuthors());
-  }, [dispatch]);
+    if (user?.role === "admin") {
+      dispatch(fetchAdminAuthors());
+    }
+  }, [dispatch, user?.role]);
+
+  if (user?.role !== "admin") {
+    return <Navigate to="/admin/dashboard" replace />;
+  }
 
   const openCreate = () => {
     dispatch(clearSaveError());
     setEditingAuthor(null);
     setForm(EMPTY_FORM);
     setSlugEdited(false);
+    setUploadId(`author_temp_${Date.now()}`);
     setDialogOpen(true);
   };
 
@@ -143,6 +196,7 @@ export default function AdminAuthors() {
     setEditingAuthor(author);
     setForm(authorToForm(author));
     setSlugEdited(true);
+    setUploadId(`author_${author.id}`);
     setDialogOpen(true);
   };
 
@@ -152,6 +206,17 @@ export default function AdminAuthors() {
       name,
       slug: slugEdited ? f.slug : toSlug(name),
     }));
+  };
+
+  const buildSocialLinks = (): SocialLinks | null => {
+    const sl: SocialLinks = {};
+    if (form.social_facebook) sl.facebook = form.social_facebook;
+    if (form.social_instagram) sl.instagram = form.social_instagram;
+    if (form.social_linkedin) sl.linkedin = form.social_linkedin;
+    if (form.social_youtube) sl.youtube = form.social_youtube;
+    if (form.social_tiktok) sl.tiktok = form.social_tiktok;
+    if (form.social_website) sl.website = form.social_website;
+    return Object.keys(sl).length > 0 ? sl : null;
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -165,6 +230,7 @@ export default function AdminAuthors() {
       avatar_url: form.avatar_url || null,
       twitter_handle: form.twitter_handle || null,
       email: form.email || null,
+      social_links: buildSocialLinks(),
       user_email: form.user_email || undefined,
       user_role: form.user_email ? form.user_role : undefined,
     };
@@ -186,8 +252,12 @@ export default function AdminAuthors() {
 
   const handleDelete = async () => {
     if (deleteId == null) return;
-    await dispatch(deleteAdminAuthor(deleteId));
-    setDeleteId(null);
+    try {
+      await dispatch(deleteAdminAuthor(deleteId)).unwrap();
+      setDeleteId(null);
+    } catch {
+      // deleteError shown in alert
+    }
   };
 
   const initials = (name: string) =>
@@ -216,6 +286,27 @@ export default function AdminAuthors() {
           Nuevo autor
         </Button>
       </div>
+
+      {listError && (
+        <Alert variant="destructive">
+          <AlertDescription className="flex flex-wrap items-center justify-between gap-4">
+            <span>{listError}</span>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => dispatch(fetchAdminAuthors())}
+            >
+              Reintentar
+            </Button>
+          </AlertDescription>
+        </Alert>
+      )}
+
+      {deleteError && (
+        <Alert variant="destructive">
+          <AlertDescription>{deleteError}</AlertDescription>
+        </Alert>
+      )}
 
       {/* Authors grid */}
       {loading ? (
@@ -336,13 +427,48 @@ export default function AdminAuthors() {
                     <Twitter className="w-3 h-3 mr-1" />@{author.twitter_handle}
                   </Badge>
                 )}
+                {/* Social links indicators */}
+                {(() => {
+                  const sl = (author.social_links ?? {}) as Record<
+                    string,
+                    string
+                  >;
+                  const icons = [
+                    { key: "facebook", Icon: Facebook, color: "text-blue-500" },
+                    {
+                      key: "instagram",
+                      Icon: Instagram,
+                      color: "text-pink-500",
+                    },
+                    { key: "linkedin", Icon: Linkedin, color: "text-blue-400" },
+                    { key: "youtube", Icon: Youtube, color: "text-red-500" },
+                    { key: "website", Icon: Globe, color: "text-emerald-400" },
+                  ];
+                  return icons
+                    .filter(({ key }) => sl[key])
+                    .map(({ key, Icon, color }) => (
+                      <a
+                        key={key}
+                        href={sl[key]}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        onClick={(e) => e.stopPropagation()}
+                        className={cn(
+                          "w-5 h-5 flex items-center justify-center rounded hover:opacity-70 transition-opacity",
+                          color,
+                        )}
+                        title={key}
+                      >
+                        <Icon className="w-3.5 h-3.5" />
+                      </a>
+                    ));
+                })()}
               </div>
             </div>
           ))}
         </div>
       )}
 
-      {/* Create/Edit Dialog */}
       <Dialog
         open={dialogOpen}
         onOpenChange={(open) => {
@@ -350,7 +476,7 @@ export default function AdminAuthors() {
           if (!open) dispatch(clearSaveError());
         }}
       >
-        <DialogContent className="max-w-lg">
+        <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>
               {editingAuthor ? "Editar autor" : "Nuevo autor"}
@@ -408,20 +534,22 @@ export default function AdminAuthors() {
                 />
               </div>
 
-              <div className="space-y-1.5">
-                <Label className="text-xs">URL de avatar</Label>
-                <Input
+              {/* Avatar upload */}
+              <div className="col-span-2">
+                <ImageUploadCrop
                   value={form.avatar_url}
-                  onChange={(e) =>
-                    setForm((f) => ({ ...f, avatar_url: e.target.value }))
+                  onChange={(url) =>
+                    setForm((f) => ({ ...f, avatar_url: url }))
                   }
-                  placeholder="https://…"
-                  className="bg-accent/40 border-border h-9 text-sm"
+                  uploadId={uploadId}
+                  aspectRatio={1}
+                  label="Foto de perfil"
+                  previewShape="circle"
                 />
               </div>
 
               <div className="space-y-1.5">
-                <Label className="text-xs">Twitter handle</Label>
+                <Label className="text-xs">Twitter / X handle</Label>
                 <div className="relative">
                   <Twitter className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground pointer-events-none" />
                   <Input
@@ -454,6 +582,131 @@ export default function AdminAuthors() {
                 </div>
               </div>
             </div>
+
+            {/* Social networks */}
+            <Collapsible>
+              <CollapsibleTrigger asChild>
+                <button
+                  type="button"
+                  className="flex items-center gap-2 w-full text-left text-xs font-medium text-muted-foreground hover:text-foreground transition-colors py-1"
+                >
+                  <Globe className="w-3.5 h-3.5" />
+                  Redes sociales
+                  <ChevronDown className="w-3.5 h-3.5 ml-auto" />
+                </button>
+              </CollapsibleTrigger>
+              <CollapsibleContent>
+                <div className="grid grid-cols-2 gap-3 pt-3 border-t border-border/40">
+                  <div className="space-y-1.5">
+                    <Label className="text-xs flex items-center gap-1.5">
+                      <Facebook className="w-3.5 h-3.5 text-blue-500" />
+                      Facebook
+                    </Label>
+                    <Input
+                      value={form.social_facebook}
+                      onChange={(e) =>
+                        setForm((f) => ({
+                          ...f,
+                          social_facebook: e.target.value,
+                        }))
+                      }
+                      placeholder="https://facebook.com/..."
+                      className="bg-accent/40 border-border h-8 text-xs"
+                    />
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <Label className="text-xs flex items-center gap-1.5">
+                      <Instagram className="w-3.5 h-3.5 text-pink-500" />
+                      Instagram
+                    </Label>
+                    <Input
+                      value={form.social_instagram}
+                      onChange={(e) =>
+                        setForm((f) => ({
+                          ...f,
+                          social_instagram: e.target.value,
+                        }))
+                      }
+                      placeholder="https://instagram.com/..."
+                      className="bg-accent/40 border-border h-8 text-xs"
+                    />
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <Label className="text-xs flex items-center gap-1.5">
+                      <Linkedin className="w-3.5 h-3.5 text-blue-400" />
+                      LinkedIn
+                    </Label>
+                    <Input
+                      value={form.social_linkedin}
+                      onChange={(e) =>
+                        setForm((f) => ({
+                          ...f,
+                          social_linkedin: e.target.value,
+                        }))
+                      }
+                      placeholder="https://linkedin.com/in/..."
+                      className="bg-accent/40 border-border h-8 text-xs"
+                    />
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <Label className="text-xs flex items-center gap-1.5">
+                      <Youtube className="w-3.5 h-3.5 text-red-500" />
+                      YouTube
+                    </Label>
+                    <Input
+                      value={form.social_youtube}
+                      onChange={(e) =>
+                        setForm((f) => ({
+                          ...f,
+                          social_youtube: e.target.value,
+                        }))
+                      }
+                      placeholder="https://youtube.com/@..."
+                      className="bg-accent/40 border-border h-8 text-xs"
+                    />
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <Label className="text-xs flex items-center gap-1.5">
+                      <FaTiktok className="w-3 h-3 text-foreground" />
+                      TikTok
+                    </Label>
+                    <Input
+                      value={form.social_tiktok}
+                      onChange={(e) =>
+                        setForm((f) => ({
+                          ...f,
+                          social_tiktok: e.target.value,
+                        }))
+                      }
+                      placeholder="https://tiktok.com/@..."
+                      className="bg-accent/40 border-border h-8 text-xs"
+                    />
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <Label className="text-xs flex items-center gap-1.5">
+                      <Globe className="w-3.5 h-3.5 text-emerald-400" />
+                      Sitio web
+                    </Label>
+                    <Input
+                      value={form.social_website}
+                      onChange={(e) =>
+                        setForm((f) => ({
+                          ...f,
+                          social_website: e.target.value,
+                        }))
+                      }
+                      placeholder="https://miwebsite.com"
+                      className="bg-accent/40 border-border h-8 text-xs"
+                    />
+                  </div>
+                </div>
+              </CollapsibleContent>
+            </Collapsible>
 
             {/* User account section */}
             <div className="rounded-lg border border-border/60 border-dashed p-3 space-y-3">

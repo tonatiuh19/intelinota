@@ -16,6 +16,16 @@ export default defineConfig(({ mode }) => ({
   },
   build: {
     outDir: "dist",
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          "vendor-react": ["react", "react-dom", "react-router-dom"],
+          "vendor-state": ["@reduxjs/toolkit", "react-redux", "axios"],
+          "vendor-motion": ["framer-motion"],
+          "vendor-forms": ["formik", "yup"],
+        },
+      },
+    },
   },
   plugins: [react(), expressPlugin()],
   resolve: {

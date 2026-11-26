@@ -1,83 +1,177 @@
+import { useEffect, useMemo } from "react";
 import { Link } from "react-router-dom";
-import {
-  ArrowRight,
-  TrendingUp,
-  Clock,
-  ChevronRight,
-  Play,
-  Hash,
-  MessageSquare,
-  Twitter,
-  Instagram,
-  Linkedin,
-  Zap,
-} from "lucide-react";
+import { ArrowRight, RotateCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import { cn } from "@/lib/utils";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { useState, useEffect, useRef } from "react";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
 import {
   fetchHome,
   selectHomeFeatured,
   selectHomeArticles,
-  selectHomeTrending,
+  selectHomeMostRead,
   selectHomeLoading,
   selectHomeMeta,
+  selectHomeError,
+  selectHomeCategories,
 } from "@/store/slices/homeSlice";
-import type { Article } from "@shared/api";
+import type { Article, Category } from "@shared/api";
 import MetaHead from "@/components/MetaHead";
+import ArticleCard from "@/components/ArticleCard";
+import ScrollReveal from "@/components/motion/ScrollReveal";
+import NewsletterForm from "@/components/NewsletterForm";
+import { mergeJsonLd, buildWebSiteJsonLd, TWITTER_DOMAIN } from "@/lib/seo";
+import { categoryUrlPath } from "@/lib/categorySlugs";
+import { formatRelative } from "@/lib/format";
+
+function SectionHeader({ title, to }: { title: string; to?: string }) {
+  return (
+    <div className="rule-top mb-5 flex items-baseline justify-between pt-3">
+      <h2 className="font-display text-xl font-bold tracking-tight sm:text-2xl">{title}</h2>
+      {to && (
+        <Link
+          to={to}
+          className="group inline-flex h-10 items-center gap-1 text-sm font-semibold text-muted-foreground hover:text-foreground"
+        >
+          Ver todo
+          <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-0.5" />
+        </Link>
+      )}
+    </div>
+  );
+}
+
+function LatestRail({ articles }: { articles: Article[] }) {
+  return (
+    <section aria-labelledby="latest-h">
+      <div className="mb-3 flex items-center gap-2">
+        <span className="relative flex h-2 w-2">
+          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-brand opacity-60 motion-reduce:hidden" />
+          <span className="relative inline-flex h-2 w-2 rounded-full bg-brand" />
+        </span>
+        <h2 id="latest-h" className="kicker">Lo último</h2>
+      </div>
+      <ol className="divide-y">
+        {articles.map((a) => (
+          <li key={a.id}>
+            <Link to={`/articulo/${a.slug}`} className="group block py-3">
+              <time
+                dateTime={a.published_at ?? undefined}
+                className="text-xs font-semibold tabular-nums text-brand"
+              >
+                {formatRelative(a.published_at)}
+              </time>
+              <p className="mt-0.5 font-display text-[15px] font-semibold leading-snug">
+                <span className="headline-link">{a.title}</span>
+              </p>
+            </Link>
+          </li>
+        ))}
+      </ol>
+    </section>
+  );
+}
+
+function MostRead({ articles }: { articles: Article[] }) {
+  if (!articles.length) return null;
+  return (
+    <section aria-labelledby="mostread-h" className="rule-top pt-3">
+      <h2 id="mostread-h" className="mb-2 font-display text-xl font-bold">Más leídas</h2>
+      <ol>
+        {articles.map((a, i) => (
+          <li key={a.id} className="border-b last:border-0">
+            <Link to={`/articulo/${a.slug}`} className="group flex gap-4 py-3.5">
+              <span
+                aria-hidden
+                className="w-7 shrink-0 font-display text-3xl font-bold leading-none text-brand/80 tabular-nums"
+              >
+                {i + 1}
+              </span>
+              <span className="font-display text-[15px] font-semibold leading-snug">
+                <span className="headline-link">{a.title}</span>
+              </span>
+            </Link>
+          </li>
+        ))}
+      </ol>
+    </section>
+  );
+}
+
+function SectionFront({ category, articles }: { category: Category; articles: Article[] }) {
+  if (articles.length === 0) return null;
+  const [main, ...rest] = articles;
+  return (
+    <ScrollReveal>
+      <section aria-label={category.name}>
+        <SectionHeader title={category.name} to={categoryUrlPath(category.slug)} />
+        <div className="grid grid-cols-1 gap-8 md:grid-cols-12">
+          <ArticleCard article={main} variant="horizontal" className="md:col-span-8" />
+          <div className="divide-y md:col-span-4 md:border-l md:pl-6">
+            {rest.slice(0, 3).map((a) => (
+              <ArticleCard key={a.id} article={a} variant="headline" className="py-4 first:pt-0" />
+            ))}
+          </div>
+        </div>
+      </section>
+    </ScrollReveal>
+  );
+}
+
+function HomeSkeleton() {
+  return (
+    <div className="container grid grid-cols-1 gap-8 px-4 py-8 sm:px-6 lg:grid-cols-12 lg:px-8">
+      <div className="hidden space-y-4 lg:col-span-3 lg:block">
+        {Array.from({ length: 6 }).map((_, i) => (
+          <Skeleton key={i} className="h-14 w-full" />
+        ))}
+      </div>
+      <div className="space-y-4 lg:col-span-6">
+        <Skeleton className="aspect-[16/10] w-full" />
+        <Skeleton className="h-10 w-4/5" />
+        <Skeleton className="h-5 w-full" />
+      </div>
+      <div className="space-y-4 lg:col-span-3">
+        {Array.from({ length: 5 }).map((_, i) => (
+          <Skeleton key={i} className="h-12 w-full" />
+        ))}
+      </div>
+    </div>
+  );
+}
 
 export default function Index() {
   const dispatch = useAppDispatch();
-
   const featured = useAppSelector(selectHomeFeatured);
   const articles = useAppSelector(selectHomeArticles);
-  const trending = useAppSelector(selectHomeTrending);
+  const mostRead = useAppSelector(selectHomeMostRead);
+  const categories = useAppSelector(selectHomeCategories);
   const loading = useAppSelector(selectHomeLoading);
   const meta = useAppSelector(selectHomeMeta);
-
-  const heroArticles = featured.length > 0 ? featured : articles.slice(0, 6);
-
-  const techArticles = articles.filter((a) => a.category_name === "Tecnología");
-  const gamingArticles = articles.filter(
-    (a) => a.category_name === "Videojuegos",
-  );
-  const cinemaArticles = articles.filter((a) => a.category_name === "Cine");
-  const mundoArticles = articles.filter((a) => a.category_name === "Mundo");
-
-  const [activeHeroIndex, setActiveHeroIndex] = useState(0);
-  const [isHovering, setIsHovering] = useState(false);
-  const autoRotateTimer = useRef<NodeJS.Timeout | null>(null);
-  const touchStartX = useRef<number | null>(null);
+  const error = useAppSelector(selectHomeError);
 
   useEffect(() => {
     dispatch(fetchHome());
   }, [dispatch]);
 
-  useEffect(() => {
-    if (!isHovering) {
-      autoRotateTimer.current = setInterval(() => {
-        setActiveHeroIndex(
-          (prev) => (prev + 1) % Math.max(heroArticles.length, 1),
-        );
-      }, 5000);
+  const { lead, secondary, latest, byCategory } = useMemo(() => {
+    const pool = featured.length ? featured : articles;
+    const lead = pool[0];
+    const used = new Set<number>(lead ? [lead.id] : []);
+    const secondary = pool.filter((a) => !used.has(a.id)).slice(0, 2);
+    secondary.forEach((a) => used.add(a.id));
+    const latest = articles.slice(0, 8);
+    const byCategory = new Map<number, Article[]>();
+    for (const a of articles) {
+      if (used.has(a.id)) continue;
+      const list = byCategory.get(a.category_id) ?? [];
+      list.push(a);
+      byCategory.set(a.category_id, list);
     }
-    return () => {
-      if (autoRotateTimer.current) clearInterval(autoRotateTimer.current);
-    };
-  }, [isHovering, heroArticles.length]);
-
-  useEffect(() => {
-    if (heroArticles.length > 0 && activeHeroIndex >= heroArticles.length) {
-      setActiveHeroIndex(0);
-    }
-  }, [heroArticles.length, activeHeroIndex]);
+    return { lead, secondary, latest, byCategory };
+  }, [featured, articles]);
 
   return (
-    <div className="space-y-12 pb-16">
+    <div className="pb-20">
       <MetaHead
         title={null}
         description={meta?.description}
@@ -86,661 +180,88 @@ export default function Index() {
         ogDescription={meta?.og_description}
         ogImage={meta?.og_image}
         canonical={meta?.canonical_url}
+        twitterDomain={TWITTER_DOMAIN}
+        jsonLd={mergeJsonLd(buildWebSiteJsonLd())}
       />
-      {/* Feature Slate Hero */}
-      <section
-        className="container px-4 sm:px-6 lg:px-8 mt-6"
-        onMouseEnter={() => setIsHovering(true)}
-        onMouseLeave={() => setIsHovering(false)}
-      >
-        {loading && heroArticles.length === 0 ? (
-          <Skeleton className="h-[500px] lg:h-[650px] w-full rounded-[2rem]" />
-        ) : heroArticles.length > 0 ? (
-          <>
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-1 h-auto lg:h-[650px] overflow-hidden rounded-[2rem] border border-primary/10 shadow-2xl shadow-black/50 bg-black">
-              {/* Main Stage (Left) */}
-              <div
-                className="lg:col-span-8 relative overflow-hidden group bg-black min-h-[420px] sm:min-h-[480px] lg:min-h-0"
-                onTouchStart={(e) => {
-                  touchStartX.current = e.touches[0].clientX;
-                }}
-                onTouchEnd={(e) => {
-                  if (touchStartX.current === null) return;
-                  const dx = e.changedTouches[0].clientX - touchStartX.current;
-                  if (Math.abs(dx) > 40) {
-                    if (dx < 0)
-                      setActiveHeroIndex((p) => (p + 1) % heroArticles.length);
-                    else
-                      setActiveHeroIndex(
-                        (p) =>
-                          (p - 1 + heroArticles.length) % heroArticles.length,
-                      );
-                  }
-                  touchStartX.current = null;
-                }}
-              >
-                {heroArticles.map((article, idx) => (
-                  <div
-                    key={article.id}
-                    className={cn(
-                      "absolute inset-0 transition-all duration-1000 ease-in-out",
-                      activeHeroIndex === idx
-                        ? "opacity-100 scale-100"
-                        : "opacity-0 scale-105 pointer-events-none",
-                    )}
-                  >
-                    <img
-                      src={article.image_url ?? "/placeholder.jpg"}
-                      alt={article.title}
-                      className="h-full w-full object-cover grayscale-[20%]"
-                    />
-                    <div className="absolute inset-0 bg-gradient-to-t from-black via-black/50 to-transparent" />
-                    <div className="absolute inset-0 bg-gradient-to-r from-black/60 via-transparent to-transparent" />
+      <h1 className="sr-only">INTELINOTA — Noticias de tecnología, deportes y cultura</h1>
 
-                    {/* Content Overlay */}
-                    <div className="absolute inset-0 p-6 pb-14 sm:pb-8 sm:p-8 md:p-12 flex flex-col justify-end">
-                      <div
-                        className={cn(
-                          "max-w-2xl space-y-3 sm:space-y-4 transition-all duration-700 delay-300 transform",
-                          activeHeroIndex === idx
-                            ? "translate-y-0 opacity-100"
-                            : "translate-y-10 opacity-0",
-                        )}
-                      >
-                        <Badge className="bg-primary/90 hover:bg-primary text-xs font-black uppercase tracking-[0.2em] italic px-4 py-1 rounded-full mb-1">
-                          {article.category_name}
-                        </Badge>
-                        <Link to={`/articulo/${article.slug}`}>
-                          <h1 className="text-3xl sm:text-4xl md:text-6xl font-black italic tracking-tighter leading-[0.85] text-white uppercase drop-shadow-2xl hover:text-primary transition-colors cursor-pointer">
-                            {article.title}
-                          </h1>
-                        </Link>
-                        <p className="hidden sm:block text-white/80 text-base sm:text-lg line-clamp-2 font-medium leading-relaxed max-w-xl">
-                          {article.excerpt}
-                        </p>
-                        <div className="flex items-center gap-4 pt-2 sm:pt-4">
-                          <Link to={`/articulo/${article.slug}`}>
-                            <Button
-                              size="lg"
-                              className="rounded-full px-5 sm:px-8 font-black italic uppercase tracking-tighter group h-11 sm:h-14 text-sm sm:text-lg"
-                            >
-                              Leer más
-                              <ArrowRight className="ml-2 h-4 w-4 group-hover:translate-x-1 transition-transform" />
-                            </Button>
-                          </Link>
-                          <div className="flex items-center gap-1.5 text-white/50 text-xs sm:text-sm font-bold uppercase tracking-widest">
-                            <Clock className="h-3.5 w-3.5" />
-                            {article.read_time_minutes} min
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                ))}
-
-                {/* Mobile dot indicators */}
-                <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex gap-1.5 lg:hidden z-10">
-                  {heroArticles.map((_, idx) => (
-                    <button
-                      key={idx}
-                      onClick={() => setActiveHeroIndex(idx)}
-                      className={cn(
-                        "h-1.5 rounded-full transition-all duration-300",
-                        activeHeroIndex === idx
-                          ? "w-6 bg-primary"
-                          : "w-1.5 bg-white/40 hover:bg-white/70",
-                      )}
-                    />
-                  ))}
-                </div>
-              </div>
-
-              {/* Index (Right) */}
-              <div className="hidden lg:flex lg:col-span-4 bg-muted/30 flex-col divide-y divide-primary/5">
-                {heroArticles.map((article, idx) => (
-                  <button
-                    key={article.id}
-                    onClick={() => setActiveHeroIndex(idx)}
-                    onMouseEnter={() => setActiveHeroIndex(idx)}
-                    className={cn(
-                      "flex-1 flex items-center gap-4 px-6 text-left transition-all relative group overflow-hidden",
-                      activeHeroIndex === idx
-                        ? "bg-primary text-primary-foreground"
-                        : "hover:bg-primary/5 text-muted-foreground",
-                    )}
-                  >
-                    {/* Progress Bar Background */}
-                    {activeHeroIndex === idx && !isHovering && (
-                      <div
-                        className="absolute bottom-0 left-0 right-0 h-1 bg-white/20 origin-left"
-                        style={{
-                          animation: "progress 5s linear forwards",
-                        }}
-                      />
-                    )}
-
-                    <span
-                      className={cn(
-                        "text-2xl font-black italic tracking-tighter transition-colors",
-                        activeHeroIndex === idx
-                          ? "text-primary-foreground/20"
-                          : "text-muted-foreground/10",
-                      )}
-                    >
-                      {String(idx + 1).padStart(2, "0")}
-                    </span>
-
-                    <div className="flex-1 min-w-0 py-4">
-                      <div
-                        className={cn(
-                          "text-[10px] font-black uppercase tracking-[0.2em] mb-1 italic",
-                          activeHeroIndex === idx
-                            ? "text-primary-foreground/70"
-                            : "text-primary",
-                        )}
-                      >
-                        {article.subcategory_name}
-                      </div>
-                      <h3
-                        className={cn(
-                          "font-bold uppercase tracking-tighter leading-none text-sm md:text-base line-clamp-2 transition-transform duration-300",
-                          activeHeroIndex === idx
-                            ? "translate-x-1"
-                            : "group-hover:translate-x-1",
-                        )}
-                      >
-                        {article.title}
-                      </h3>
-                    </div>
-
-                    {activeHeroIndex === idx && (
-                      <Play className="h-4 w-4 fill-current" />
-                    )}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Mobile thumbnail strip */}
-            <div className="lg:hidden flex gap-2.5 overflow-x-auto pb-1 pt-3 snap-x snap-mandatory [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-              {heroArticles.map((article, idx) => (
-                <button
-                  key={article.id}
-                  onClick={() => setActiveHeroIndex(idx)}
-                  className={cn(
-                    "flex-none w-[130px] snap-start relative overflow-hidden rounded-xl aspect-[4/3] bg-black border-2 transition-all duration-300 shrink-0",
-                    activeHeroIndex === idx
-                      ? "border-primary shadow-lg shadow-primary/30"
-                      : "border-transparent opacity-60",
-                  )}
-                >
-                  <img
-                    src={article.image_url ?? "/placeholder.jpg"}
-                    alt={article.title}
-                    className="w-full h-full object-cover"
-                  />
-                  <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/20 to-transparent" />
-                  <div className="absolute bottom-0 left-0 right-0 p-2">
-                    <p className="text-[9px] font-black uppercase tracking-widest text-primary leading-none mb-0.5">
-                      {article.category_name}
-                    </p>
-                    <p className="text-white text-[10px] font-black uppercase leading-tight line-clamp-2">
-                      {article.title}
-                    </p>
-                  </div>
-                  {activeHeroIndex === idx && (
-                    <div className="absolute top-1.5 right-1.5 w-4 h-4 rounded-full bg-primary flex items-center justify-center">
-                      <Play className="h-2 w-2 fill-white text-white" />
-                    </div>
-                  )}
-                </button>
-              ))}
-            </div>
-          </>
-        ) : null}
-      </section>
-
-      <div className="container grid grid-cols-1 lg:grid-cols-12 gap-12">
-        {/* Main Content Area */}
-        <div className="lg:col-span-8 space-y-12">
-          {/* Breaking News Tick / Carousel (Simulated) */}
-          <div className="bg-primary/5 rounded-3xl p-4 border border-primary/20 flex items-center gap-4 shadow-xl shadow-black/10">
-            <Badge
-              variant="outline"
-              className="bg-primary text-primary-foreground border-none font-black italic uppercase shrink-0 px-4 py-1 rounded-full animate-pulse"
-            >
-              ÚLTIMA HORA
-            </Badge>
-            <p className="text-sm font-black italic uppercase tracking-tight text-primary/80 animate-in fade-in slide-in-from-right-4 duration-1000">
-              Nuevos avances en la regulación de la IA propuestos por la
-              coalición tecnológica global.
-            </p>
-          </div>
-
-          {/* More Stories Grid */}
-          <div className="space-y-8">
-            <div className="flex items-center justify-between border-b pb-4">
-              <h2 className="text-3xl font-black italic tracking-tighter uppercase">
-                Más Historias
-              </h2>
-              <Button variant="ghost" className="group">
-                Ver todo{" "}
-                <ChevronRight className="ml-1 h-4 w-4 group-hover:translate-x-1 transition-transform" />
-              </Button>
-            </div>
-            {loading && articles.length === 0 ? (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                {[...Array(4)].map((_, i) => (
-                  <Skeleton key={i} className="h-72 rounded-2xl" />
-                ))}
-              </div>
-            ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                {articles.map((article) => (
-                  <ArticleCard key={article.id} article={article} />
-                ))}
-              </div>
-            )}
-          </div>
-
-          {/* Section: Tecnología */}
-          {techArticles.length > 0 && (
-            <div className="space-y-8">
-              <div className="flex items-center justify-between border-b pb-4">
-                <h2 className="text-3xl font-black italic tracking-tighter uppercase">
-                  Tecnología
-                </h2>
-                <Link to="/categoria/technology">
-                  <Button variant="ghost" className="group">
-                    Explorar{" "}
-                    <ChevronRight className="ml-1 h-4 w-4 group-hover:translate-x-1 transition-transform" />
-                  </Button>
-                </Link>
-              </div>
-              <div className="grid grid-cols-1 gap-6">
-                {techArticles.map((article) => (
-                  <ArticleHorizontalCard key={article.id} article={article} />
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Section: Videojuegos & Esports */}
-          {gamingArticles.length > 0 && (
-            <div className="space-y-8">
-              <div className="flex items-center justify-between border-b pb-4">
-                <h2 className="text-3xl font-black italic tracking-tighter uppercase">
-                  Videojuegos
-                </h2>
-                <Link to="/categoria/video-games">
-                  <Button variant="ghost" className="group">
-                    Entrar al Lobby{" "}
-                    <ChevronRight className="ml-1 h-4 w-4 group-hover:translate-x-1 transition-transform" />
-                  </Button>
-                </Link>
-              </div>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                {gamingArticles.slice(0, 2).map((article) => (
-                  <Link
-                    key={article.id}
-                    to={`/articulo/${article.slug}`}
-                    className="group relative overflow-hidden rounded-3xl aspect-[16/10] bg-black"
-                  >
-                    <img
-                      src={article.image_url ?? "/placeholder.jpg"}
-                      alt={article.title}
-                      className="absolute inset-0 w-full h-full object-cover transition-transform duration-1000 group-hover:scale-110 opacity-60 group-hover:opacity-100"
-                    />
-                    <div className="absolute inset-0 bg-gradient-to-t from-black via-black/20 to-transparent" />
-                    <div className="absolute inset-0 p-6 flex flex-col justify-end">
-                      <Badge className="bg-primary/90 text-[10px] font-black uppercase tracking-widest italic w-fit mb-2">
-                        {article.subcategory_name}
-                      </Badge>
-                      <h3 className="text-xl font-black italic tracking-tighter leading-none text-white uppercase group-hover:text-primary transition-colors">
-                        {article.title}
-                      </h3>
-                    </div>
-                  </Link>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Section: Cine & Series */}
-          {cinemaArticles.length > 0 && (
-            <div className="space-y-8">
-              <div className="flex items-center justify-between border-b pb-4">
-                <h2 className="text-3xl font-black italic tracking-tighter uppercase">
-                  Cine & Series
-                </h2>
-                <Link to="/categoria/cinema">
-                  <Button variant="ghost" className="group">
-                    Ver cartelera{" "}
-                    <ChevronRight className="ml-1 h-4 w-4 group-hover:translate-x-1 transition-transform" />
-                  </Button>
-                </Link>
-              </div>
-              <div className="relative rounded-[2rem] overflow-hidden group aspect-[21/9] min-h-[300px]">
-                {cinemaArticles.slice(0, 1).map((article) => (
-                  <Link
-                    key={article.id}
-                    to={`/articulo/${article.slug}`}
-                    className="block h-full"
-                  >
-                    <img
-                      src={article.image_url ?? "/placeholder.jpg"}
-                      alt={article.title}
-                      className="absolute inset-0 w-full h-full object-cover transition-transform [transition-duration:2000ms] group-hover:scale-110"
-                    />
-                    <div className="absolute inset-0 bg-black/40 group-hover:bg-black/20 transition-colors" />
-                    <div className="absolute inset-0 flex flex-col items-center justify-center text-center p-8 space-y-4">
-                      <Badge className="bg-primary hover:bg-primary font-black italic uppercase tracking-[0.3em] px-6 py-1.5 rounded-full shadow-2xl animate-pulse">
-                        Estreno Destacado
-                      </Badge>
-                      <h3 className="text-3xl md:text-5xl font-black italic tracking-tighter uppercase text-white drop-shadow-2xl">
-                        {article.title}
-                      </h3>
-                      <Button
-                        variant="secondary"
-                        className="rounded-full px-10 font-black italic uppercase tracking-tighter h-12 shadow-2xl"
-                      >
-                        Ver análisis <ArrowRight className="ml-2 h-4 w-4" />
-                      </Button>
-                    </div>
-                  </Link>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Section: Mundo & Ciencia */}
-          {mundoArticles.length > 0 && (
-            <div className="space-y-8">
-              <div className="flex items-center justify-between border-b pb-4">
-                <h2 className="text-3xl font-black italic tracking-tighter uppercase">
-                  Mundo & Ciencia
-                </h2>
-                <Link to="/categoria/world-news">
-                  <Button variant="ghost" className="group">
-                    Global News{" "}
-                    <ChevronRight className="ml-1 h-4 w-4 group-hover:translate-x-1 transition-transform" />
-                  </Button>
-                </Link>
-              </div>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                {mundoArticles.slice(0, 3).map((article) => (
-                  <Link
-                    key={article.id}
-                    to={`/articulo/${article.slug}`}
-                    className="group space-y-3"
-                  >
-                    <div className="aspect-square rounded-2xl overflow-hidden bg-muted border border-primary/5 shadow-lg shadow-black/20">
-                      <img
-                        src={article.image_url ?? "/placeholder.jpg"}
-                        alt={article.title}
-                        className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110"
-                      />
-                    </div>
-                    <h4 className="font-black italic tracking-tighter uppercase leading-tight text-sm md:text-base group-hover:text-primary transition-colors line-clamp-2">
-                      {article.title}
-                    </h4>
-                  </Link>
-                ))}
-              </div>
-            </div>
-          )}
+      {error && !lead && (
+        <div className="container px-4 py-16 text-center sm:px-6 lg:px-8">
+          <p className="font-display text-2xl font-semibold">No pudimos cargar la portada.</p>
+          <p className="mt-2 text-muted-foreground">{error}</p>
+          <Button variant="outline" className="mt-6 h-11" onClick={() => dispatch(fetchHome())}>
+            <RotateCw className="mr-2 h-4 w-4" /> Reintentar
+          </Button>
         </div>
+      )}
 
-        {/* Sidebar */}
-        <aside className="lg:col-span-4 space-y-12">
-          {/* Trending Section */}
-          <div className="bg-muted/30 rounded-2xl p-6 border border-primary/5 space-y-6">
-            <div className="flex items-center gap-2 text-primary">
-              <TrendingUp className="h-5 w-5" />
-              <h3 className="text-xl font-black italic uppercase tracking-tighter">
-                Tendencias
-              </h3>
-            </div>
-            <div className="space-y-6">
-              {trending.map((article, idx) => (
-                <Link
-                  key={article.id}
-                  to={`/articulo/${article.slug}`}
-                  className="group block"
-                >
-                  <div className="flex gap-4">
-                    <span className="text-4xl font-black text-muted-foreground/20 italic group-hover:text-primary/40 transition-colors">
-                      {String(idx + 1).padStart(2, "0")}
-                    </span>
-                    <div className="space-y-1">
-                      <span className="text-[10px] font-bold uppercase tracking-widest text-primary">
-                        {article.category_name}
-                      </span>
-                      <h4 className="font-bold leading-tight group-hover:underline group-hover:underline-offset-2 uppercase text-sm">
-                        {article.title}
-                      </h4>
-                      <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
-                        <Clock className="h-3 w-3" />
-                        {article.read_time_minutes} min
-                      </div>
-                    </div>
+      {loading && !lead && <HomeSkeleton />}
+
+      {lead && (
+        <>
+          {/* ── Front page ─────────────────────────────────────── */}
+          <section className="container px-4 pt-6 sm:px-6 lg:px-8 lg:pt-8">
+            <div className="grid grid-cols-1 gap-8 lg:grid-cols-12 lg:gap-0">
+              {/* Lead + secondary */}
+              <div className="lg:order-2 lg:col-span-6 lg:px-8">
+                <ArticleCard article={lead} variant="lead" priority />
+                {secondary.length > 0 && (
+                  <div className="mt-8 grid grid-cols-1 gap-8 border-t pt-6 sm:grid-cols-2">
+                    {secondary.map((a) => (
+                      <ArticleCard key={a.id} article={a} variant="grid" />
+                    ))}
                   </div>
-                </Link>
-              ))}
-            </div>
-          </div>
+                )}
+              </div>
 
-          {/* Newsletter / CTA */}
-          <div className="bg-primary p-8 rounded-[2.5rem] text-primary-foreground space-y-4 shadow-2xl shadow-primary/20">
-            <h3 className="text-2xl font-black italic uppercase tracking-tighter leading-none">
-              Recibe Intelinota <br /> en tu correo
-            </h3>
-            <p className="text-sm opacity-90 leading-relaxed font-medium">
-              El resumen de noticias más inteligente. Únete a más de 50,000
-              mentes curiosas.
-            </p>
-            <div className="space-y-3 pt-2">
-              <input
-                placeholder="Dirección de correo"
-                className="w-full bg-white/10 border-white/20 rounded-2xl px-5 py-3 text-sm placeholder:text-white/40 focus:outline-none focus:ring-2 focus:ring-white/30 transition-all"
-              />
-              <Button
-                variant="secondary"
-                className="w-full font-black italic uppercase tracking-tighter h-12 rounded-2xl shadow-xl"
-              >
-                Suscríbete ahora
-              </Button>
-            </div>
-          </div>
+              {/* Latest rail */}
+              <aside className="lg:order-1 lg:col-span-3 lg:border-r lg:pr-8">
+                <LatestRail articles={latest} />
+              </aside>
 
-          {/* New Section: Popular Tags */}
-          <div className="space-y-6">
-            <div className="flex items-center gap-2 text-primary border-b pb-4">
-              <Hash className="h-5 w-5" />
-              <h3 className="text-xl font-black italic uppercase tracking-tighter">
-                Temas Calientes
-              </h3>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              {[
-                "Inteligencia Artificial",
-                "Champions League",
-                "Cyberpunk 2077",
-                "Web3",
-                "Sostenibilidad",
-                "Metaverso",
-                "Espacio",
-                "Gadgets",
-                "Esports",
-                "Cine de Autor",
-              ].map((tag) => (
-                <Link
-                  key={tag}
-                  to={`/search?q=${tag}`}
-                  className="px-4 py-2 bg-muted/50 rounded-full text-xs font-bold uppercase tracking-widest italic hover:bg-primary hover:text-primary-foreground transition-all border border-primary/5 shadow-sm"
-                >
-                  #{tag}
-                </Link>
-              ))}
-            </div>
-          </div>
-
-          {/* New Section: Community / Recent Comments */}
-          <div className="bg-muted/30 rounded-[2.5rem] p-8 border border-primary/5 space-y-6">
-            <div className="flex items-center gap-2 text-primary">
-              <MessageSquare className="h-5 w-5" />
-              <h3 className="text-xl font-black italic uppercase tracking-tighter">
-                Comunidad
-              </h3>
-            </div>
-            <div className="space-y-6">
-              {[
-                {
-                  user: "Carlos G.",
-                  text: "La IA neuro-simbólica realmente es el camino a seguir. Gran artículo.",
-                  article: "El Futuro de la IA",
-                },
-                {
-                  user: "Marina R.",
-                  text: "Espero que la nueva generación de tenistas mantenga el nivel del Big Three.",
-                  article: "Revolución en el Tenis",
-                },
-                {
-                  user: "Santi V.",
-                  text: "Nebula es increíble, los indies siempre sorprenden.",
-                  article: "Juego Indie del Año",
-                },
-              ].map((comment, i) => (
-                <div key={i} className="space-y-2 group cursor-pointer">
-                  <div className="flex items-center gap-2">
-                    <Avatar className="h-6 w-6 ring-1 ring-primary/20">
-                      <AvatarImage
-                        src={`https://api.dicebear.com/7.x/avataaars/svg?seed=${comment.user}`}
-                      />
-                      <AvatarFallback>{comment.user[0]}</AvatarFallback>
-                    </Avatar>
-                    <span className="text-[10px] font-black uppercase italic tracking-widest text-primary">
-                      {comment.user}
-                    </span>
-                  </div>
-                  <p className="text-xs text-muted-foreground line-clamp-2 leading-relaxed italic group-hover:text-foreground transition-colors">
-                    "{comment.text}"
+              {/* Most read + newsletter */}
+              <aside className="space-y-10 lg:order-3 lg:col-span-3 lg:border-l lg:pl-8">
+                <MostRead articles={mostRead} />
+                <div className="rounded-sm bg-foreground p-6 text-background">
+                  <p className="kicker !text-background/70">Boletín diario</p>
+                  <p className="mt-2 font-display text-xl font-bold leading-tight">
+                    Lo esencial del día, en tu correo a las 7:00.
                   </p>
-                  <div className="text-[9px] font-bold opacity-40 uppercase tracking-tighter">
-                    En: {comment.article}
-                  </div>
+                  <NewsletterForm variant="inline" source="home_rail" className="mt-4" />
                 </div>
-              ))}
+              </aside>
             </div>
+          </section>
+
+          {/* ── Section fronts ─────────────────────────────────── */}
+          <div className="container mt-16 space-y-16 px-4 sm:px-6 lg:px-8">
+            {categories.map((cat) => (
+              <SectionFront key={cat.id} category={cat} articles={byCategory.get(cat.id) ?? []} />
+            ))}
           </div>
 
-          {/* New Section: Social Media */}
-          <div className="space-y-6 pb-6">
-            <h3 className="text-sm font-black italic uppercase tracking-[0.3em] text-center opacity-30">
-              Síguenos en las redes
-            </h3>
-            <div className="flex justify-center gap-4">
-              <Button
-                variant="outline"
-                size="icon"
-                className="rounded-2xl h-12 w-12 border-primary/10 bg-muted/20 hover:bg-primary hover:text-primary-foreground transition-all shadow-lg hover:-translate-y-1"
-              >
-                <Twitter className="h-5 w-5" />
-              </Button>
-              <Button
-                variant="outline"
-                size="icon"
-                className="rounded-2xl h-12 w-12 border-primary/10 bg-muted/20 hover:bg-primary hover:text-primary-foreground transition-all shadow-lg hover:-translate-y-1"
-              >
-                <Instagram className="h-5 w-5" />
-              </Button>
-              <Button
-                variant="outline"
-                size="icon"
-                className="rounded-2xl h-12 w-12 border-primary/10 bg-muted/20 hover:bg-primary hover:text-primary-foreground transition-all shadow-lg hover:-translate-y-1"
-              >
-                <Linkedin className="h-5 w-5" />
-              </Button>
-              <Button
-                variant="outline"
-                size="icon"
-                className="rounded-2xl h-12 w-12 border-primary/10 bg-muted/20 hover:bg-primary hover:text-primary-foreground transition-all shadow-lg hover:-translate-y-1"
-              >
-                <Zap className="h-5 w-5 fill-current" />
-              </Button>
-            </div>
-          </div>
-        </aside>
-      </div>
+          {/* ── Newsletter band ────────────────────────────────── */}
+          <ScrollReveal>
+            <section
+              id="newsletter"
+              className="container mt-20 scroll-mt-24 px-4 sm:px-6 lg:px-8"
+            >
+              <div className="grid grid-cols-1 items-center gap-8 border-y-2 border-rule py-10 md:grid-cols-2 md:py-14">
+                <div>
+                  <p className="kicker">Suscríbete gratis</p>
+                  <h2 className="mt-2 font-display text-display-lg font-bold text-balance">
+                    Entiende las noticias, no solo las leas.
+                  </h2>
+                  <p className="mt-3 max-w-md font-body text-lg text-muted-foreground">
+                    Un resumen curado cada mañana. Sin spam, cancela cuando quieras.
+                  </p>
+                </div>
+                <NewsletterForm variant="footer" source="home_band" className="w-full max-w-md md:justify-self-end" />
+              </div>
+            </section>
+          </ScrollReveal>
+        </>
+      )}
     </div>
-  );
-}
-
-function ArticleCard({ article }: { article: Article }) {
-  const dateStr = article.published_at
-    ? new Date(article.published_at).toLocaleDateString("es-MX")
-    : "";
-  return (
-    <Link to={`/articulo/${article.slug}`} className="group block space-y-4">
-      <div className="aspect-[16/10] overflow-hidden rounded-2xl bg-muted relative border border-primary/5">
-        <img
-          src={article.image_url ?? "/placeholder.jpg"}
-          alt={article.title}
-          className="h-full w-full object-cover transition-transform duration-700 group-hover:scale-110 grayscale-[10%] group-hover:grayscale-0"
-        />
-        <div className="absolute top-4 left-4">
-          <Badge className="bg-black/80 text-white border-none backdrop-blur-md font-black italic uppercase text-[10px] tracking-widest px-3 py-1 rounded-full">
-            {article.subcategory_name}
-          </Badge>
-        </div>
-        <div className="absolute inset-0 bg-gradient-to-t from-black/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
-      </div>
-      <div className="space-y-2 px-1">
-        <div className="flex items-center gap-2 text-[10px] font-black text-primary uppercase tracking-[0.2em] italic">
-          {article.category_name}
-          <span className="w-1 h-1 rounded-full bg-muted-foreground opacity-30" />
-          {dateStr}
-        </div>
-        <h3 className="text-xl font-black italic tracking-tighter leading-none uppercase group-hover:text-primary transition-colors line-clamp-2">
-          {article.title}
-        </h3>
-        <p className="text-sm text-muted-foreground line-clamp-2 font-medium leading-relaxed">
-          {article.excerpt}
-        </p>
-      </div>
-    </Link>
-  );
-}
-
-function ArticleHorizontalCard({ article }: { article: Article }) {
-  return (
-    <Link
-      to={`/articulo/${article.slug}`}
-      className="group flex flex-col md:flex-row gap-6 p-4 rounded-3xl hover:bg-muted transition-all border border-transparent hover:border-primary/10"
-    >
-      <div className="md:w-1/3 aspect-[16/9] overflow-hidden rounded-2xl shrink-0 border border-primary/5 shadow-xl shadow-black/20">
-        <img
-          src={article.image_url ?? "/placeholder.jpg"}
-          alt={article.title}
-          className="h-full w-full object-cover transition-transform duration-700 group-hover:scale-110"
-        />
-      </div>
-      <div className="flex flex-col justify-center space-y-3">
-        <div className="flex items-center gap-2 text-[10px] font-black text-primary uppercase tracking-[0.2em] italic">
-          {article.subcategory_name}
-        </div>
-        <h3 className="text-xl md:text-2xl font-black italic tracking-tighter leading-none uppercase group-hover:text-primary transition-colors">
-          {article.title}
-        </h3>
-        <p className="text-sm text-muted-foreground line-clamp-2 font-medium leading-relaxed">
-          {article.excerpt}
-        </p>
-        <div className="flex items-center gap-3 text-[10px] text-muted-foreground font-bold uppercase tracking-widest pt-1">
-          <span className="text-foreground">Por {article.author_name}</span>
-          <span className="w-1 h-1 rounded-full bg-muted-foreground opacity-30" />
-          <span>{article.read_time_minutes} min</span>
-        </div>
-      </div>
-    </Link>
   );
 }

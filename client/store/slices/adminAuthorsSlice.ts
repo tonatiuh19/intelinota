@@ -9,6 +9,7 @@ const initialState: AdminAuthorsState = {
   error: null,
   saving: false,
   saveError: null,
+  deleteError: null,
 };
 
 const authHeader = (token: string) => ({ Authorization: `Bearer ${token}` });
@@ -139,8 +140,15 @@ const adminAuthorsSlice = createSlice({
         s.saveError = a.payload as string;
       });
 
+    builder.addCase(deleteAdminAuthor.pending, (s) => {
+      s.deleteError = null;
+    });
     builder.addCase(deleteAdminAuthor.fulfilled, (s, a) => {
       s.items = s.items.filter((i) => i.id !== a.payload);
+      s.deleteError = null;
+    });
+    builder.addCase(deleteAdminAuthor.rejected, (s, a) => {
+      s.deleteError = a.payload as string;
     });
   },
 });
@@ -150,8 +158,11 @@ export const { clearSaveError } = adminAuthorsSlice.actions;
 export const selectAdminAuthors = (s: RootState) => s.adminAuthors.items;
 export const selectAdminAuthorsLoading = (s: RootState) =>
   s.adminAuthors.loading;
+export const selectAdminAuthorsError = (s: RootState) => s.adminAuthors.error;
 export const selectAdminAuthorsSaving = (s: RootState) => s.adminAuthors.saving;
 export const selectAdminAuthorsSaveError = (s: RootState) =>
   s.adminAuthors.saveError;
+export const selectAdminAuthorsDeleteError = (s: RootState) =>
+  s.adminAuthors.deleteError;
 
 export default adminAuthorsSlice.reducer;

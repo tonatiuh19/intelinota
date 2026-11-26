@@ -1,5 +1,8 @@
-// REPLACING_FULL_FILE
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
+import { useFormik } from "formik";
+import { adminEmailSchema, adminCodeSchema } from "@/lib/validation/schemas";
+import { SITE_LOGO } from "@/lib/branding";
+import MetaHead from "@/components/MetaHead";
 import { useNavigate } from "react-router-dom";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
 import {
@@ -12,6 +15,8 @@ import {
   selectAdminCodeSent,
   selectAdminCodeSentEmail,
   selectIsAdminAuthenticated,
+  selectAdminToken,
+  fetchAdminMe,
 } from "@/store/slices/adminAuthSlice";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -148,7 +153,7 @@ const PARTICLES = Array.from({ length: 18 }, (_, i) => ({
 const FEATURES = [
   { icon: BarChart3, label: "Dashboard con métricas en tiempo real" },
   { icon: PenSquare, label: "Editor de artículos con bloques de contenido" },
-  { icon: Newspaper, label: "Gestión completa de noticias y categorías" },
+  { icon: Newspaper, label: "Gestión completa de noticias y artículos" },
   { icon: Users, label: "Administración de autores y roles" },
 ];
 
@@ -162,9 +167,41 @@ export default function AdminLogin() {
   const codeSent = useAppSelector(selectAdminCodeSent);
   const codeSentEmail = useAppSelector(selectAdminCodeSentEmail);
   const isAuthenticated = useAppSelector(selectIsAdminAuthenticated);
+  const token = useAppSelector(selectAdminToken);
 
-  const [email, setEmail] = useState("");
-  const [digits, setDigits] = useState(["", "", "", "", "", ""]);
+  const emailForm = useFormik({
+    initialValues: { email: "" },
+    validationSchema: adminEmailSchema,
+    onSubmit: (values) => {
+      dispatch(requestAdminCode({ email: values.email.trim() }));
+    },
+  });
+  const email = emailForm.values.email;
+
+  const codeForm = useFormik({
+    initialValues: { digits: ["", "", "", "", "", ""] },
+    validate: (values) => {
+      try {
+        adminCodeSchema.validateSync({ code: values.digits.join("") });
+        return {};
+      } catch (e) {
+        return { digits: (e as Error).message };
+      }
+    },
+    onSubmit: (values) => {
+      if (!codeSentEmail) return;
+      dispatch(
+        verifyAdminCode({ email: codeSentEmail, code: values.digits.join("") }),
+      );
+    },
+  });
+  const digits = codeForm.values.digits;
+  const setDigits = (
+    next: string[] | ((prev: string[]) => string[]),
+  ) => {
+    const value = typeof next === "function" ? next(codeForm.values.digits) : next;
+    void codeForm.setFieldValue("digits", value, false);
+  };
 
   // 6 stable refs for digit inputs
   const d0 = useRef<HTMLInputElement>(null);
@@ -176,24 +213,23 @@ export default function AdminLogin() {
   const digitRefs = [d0, d1, d2, d3, d4, d5];
 
   useEffect(() => {
-    if (isAuthenticated) navigate("/admin/dashboard", { replace: true });
-  }, [isAuthenticated, navigate]);
+    if (isAuthenticated) {
+      navigate("/admin/dashboard", { replace: true });
+      return;
+    }
+    if (token) {
+      dispatch(fetchAdminMe())
+        .unwrap()
+        .then(() => navigate("/admin/dashboard", { replace: true }))
+        .catch(() => {});
+    }
+  }, [isAuthenticated, token, navigate, dispatch]);
 
   useEffect(() => {
     if (codeSent) setTimeout(() => digitRefs[0].current?.focus(), 150);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [codeSent]);
 
-  useEffect(() => {
-    if (error) dispatch(clearError());
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [email, digits]);
-
-  const handleRequestCode = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!email.trim()) return;
-    dispatch(requestAdminCode({ email: email.trim() }));
-  };
 
   const handleDigitChange = (idx: number, val: string) => {
     if (!val) {
@@ -230,11 +266,6 @@ export default function AdminLogin() {
 
   const code = digits.join("");
 
-  const handleVerifyCode = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (code.length !== 6 || !codeSentEmail) return;
-    dispatch(verifyAdminCode({ email: codeSentEmail, code }));
-  };
 
   const handleBack = () => {
     dispatch(resetCodeSent());
@@ -242,7 +273,14 @@ export default function AdminLogin() {
   };
 
   return (
-    <div className="min-h-screen flex bg-[#07091a] overflow-hidden">
+    <>
+      <MetaHead
+        title="Iniciar sesión"
+        description="Acceso al panel de administración de Intelinota."
+        noIndex
+        includeSiteOrganization={false}
+      />
+      <div className="min-h-screen flex bg-[#07091a] overflow-hidden">
       {/* ── Left panel ───────────────────────────────────────── */}
       <div className="hidden lg:flex lg:w-[52%] flex-col justify-between p-14 relative overflow-hidden">
         {/* Background layers */}
@@ -281,7 +319,7 @@ export default function AdminLogin() {
             className="flex items-center gap-3 mb-2"
           >
             <img
-              src="https://disruptinglabs.com/data/intelinota/assets/images/logos/logo_white.png"
+              src={SITE_LOGO}
               alt="INTELINOTA"
               className="h-9 w-auto object-contain"
             />
@@ -366,7 +404,7 @@ export default function AdminLogin() {
             className="lg:hidden flex items-center gap-2 mb-10"
           >
             <img
-              src="https://disruptinglabs.com/data/intelinota/assets/images/logos/logo_white.png"
+              src={SITE_LOGO}
               alt="INTELINOTA"
               className="h-7 w-auto object-contain"
             />
@@ -419,7 +457,8 @@ export default function AdminLogin() {
                   initial={{ opacity: 0, y: 14 }}
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ delay: 0.24 }}
-                  onSubmit={handleRequestCode}
+                  onSubmit={emailForm.handleSubmit}
+                  noValidate
                   className="space-y-5"
                 >
                   <div className="space-y-2">
@@ -435,14 +474,22 @@ export default function AdminLogin() {
                         id="email"
                         type="email"
                         placeholder="admin@intelinota.com"
+                        name="email"
                         value={email}
-                        onChange={(e) => setEmail(e.target.value)}
+                        onChange={emailForm.handleChange}
+                        onBlur={emailForm.handleBlur}
+                        aria-invalid={Boolean(emailForm.touched.email && emailForm.errors.email)}
                         className="pl-11 h-12 bg-white/5 border-white/10 hover:border-white/20 focus:border-blue-500 focus:bg-blue-500/5
                                    text-white placeholder:text-white/20 rounded-xl transition-all duration-200 text-base ring-0 focus-visible:ring-0"
                         autoComplete="email"
                         required
                       />
                     </div>
+                    {emailForm.touched.email && emailForm.errors.email && (
+                      <p role="alert" className="text-xs text-red-400">
+                        {emailForm.errors.email}
+                      </p>
+                    )}
                   </div>
 
                   <AnimatePresence>
@@ -526,7 +573,7 @@ export default function AdminLogin() {
                   initial={{ opacity: 0, y: 14 }}
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ delay: 0.2 }}
-                  onSubmit={handleVerifyCode}
+                  onSubmit={codeForm.handleSubmit}
                   className="space-y-6"
                 >
                   {/* OTP boxes */}
@@ -611,5 +658,6 @@ export default function AdminLogin() {
         </div>
       </div>
     </div>
+    </>
   );
 }

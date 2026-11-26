@@ -2,10 +2,23 @@ import { configureStore } from "@reduxjs/toolkit";
 import articlesReducer from "./slices/articlesSlice";
 import categoriesReducer from "./slices/categoriesSlice";
 import homeReducer from "./slices/homeSlice";
+import authorsReducer from "./slices/authorsSlice";
+import commentsReducer from "./slices/commentsSlice";
+import newsletterReducer from "./slices/newsletterSlice";
 import adminAuthReducer from "./slices/adminAuthSlice";
 import adminArticlesReducer from "./slices/adminArticlesSlice";
 import adminAuthorsReducer from "./slices/adminAuthorsSlice";
+import adminCommentsReducer from "./slices/adminCommentsSlice";
+import adminCategoriesReducer from "./slices/adminCategoriesSlice";
+import adminNewsletterReducer from "./slices/adminNewsletterSlice";
+import adminSettingsReducer from "./slices/adminSettingsSlice";
 import adminDashboardReducer from "./slices/adminDashboardSlice";
+import adminMediaReducer from "./slices/adminMediaSlice";
+import uiReducer from "./slices/uiSlice";
+import searchReducer from "./slices/searchSlice";
+import tagsReducer from "./slices/tagsSlice";
+import revisionsReducer from "./slices/revisionsSlice";
+import adminAuditReducer from "./slices/adminAuditSlice";
 import type { RootState } from "./types";
 
 export const store = configureStore({
@@ -13,10 +26,23 @@ export const store = configureStore({
     articles: articlesReducer,
     categories: categoriesReducer,
     home: homeReducer,
+    authors: authorsReducer,
+    comments: commentsReducer,
+    newsletter: newsletterReducer,
     adminAuth: adminAuthReducer,
     adminArticles: adminArticlesReducer,
     adminAuthors: adminAuthorsReducer,
+    adminComments: adminCommentsReducer,
+    adminCategories: adminCategoriesReducer,
+    adminNewsletter: adminNewsletterReducer,
+    adminSettings: adminSettingsReducer,
     adminDashboard: adminDashboardReducer,
+    adminMedia: adminMediaReducer,
+    ui: uiReducer,
+    search: searchReducer,
+    tags: tagsReducer,
+    revisions: revisionsReducer,
+    adminAudit: adminAuditReducer,
   },
 });
 

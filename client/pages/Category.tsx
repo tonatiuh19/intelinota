@@ -1,241 +1,248 @@
 import { useParams, Link } from "react-router-dom";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { ChevronRight, TrendingUp, Filter } from "lucide-react";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { ChevronRight, TrendingUp } from "lucide-react";
+import { AnimatePresence, motion } from "framer-motion";
 import { cn } from "@/lib/utils";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
 import {
   fetchCategoryPage,
   selectCategoryPageArticles,
   selectCategoryPageTrending,
   selectCategoryPageLoading,
+  selectCategoryPageError,
+  selectCategoryPagePagination,
+  selectCategoryPageCategory,
 } from "@/store/slices/articlesSlice";
+import { URL_TO_DB_SLUG, URL_SLUG_LABELS } from "@/lib/categorySlugs";
 import MetaHead from "@/components/MetaHead";
-
-const SLUG_MAP: Record<string, string> = {
-  sports: "Deportes",
-  technology: "Tecnología",
-  "video-games": "Videojuegos",
-  cinema: "Cine",
-  "world-news": "Mundo",
-};
-
-const URL_TO_DB_SLUG: Record<string, string> = {
-  sports: "deportes",
-  technology: "tecnologia",
-  "video-games": "videojuegos",
-  cinema: "cine",
-  "world-news": "mundo",
-};
+import {
+  buildBreadcrumbJsonLd,
+  buildCollectionPageJsonLd,
+  canonicalUrl,
+  mergeJsonLd,
+} from "@/lib/seo";
+import NewsletterForm from "@/components/NewsletterForm";
+import ArticleCard from "@/components/ArticleCard";
+import StaggerGrid, { StaggerItem } from "@/components/motion/StaggerGrid";
+import { fadeIn } from "@/lib/motion";
+import { useReducedMotion } from "@/hooks/use-reduced-motion";
 
 export default function Category() {
   const { category: urlSlug } = useParams();
   const dispatch = useAppDispatch();
-  const categoryName = urlSlug ? (SLUG_MAP[urlSlug] ?? urlSlug) : "";
+  const categoryName = urlSlug ? (URL_SLUG_LABELS[urlSlug] ?? urlSlug) : "";
   const dbSlug = urlSlug ? (URL_TO_DB_SLUG[urlSlug] ?? urlSlug) : "";
 
-  const filteredArticles = useAppSelector(selectCategoryPageArticles);
+  const articles = useAppSelector(selectCategoryPageArticles);
   const loading = useAppSelector(selectCategoryPageLoading);
+  const error = useAppSelector(selectCategoryPageError);
   const topArticles = useAppSelector(selectCategoryPageTrending);
+  const pagination = useAppSelector(selectCategoryPagePagination);
+  const categoryData = useAppSelector(selectCategoryPageCategory);
+  const [activeSubcategory, setActiveSubcategory] = useState<string | null>(
+    null,
+  );
+  const [page, setPage] = useState(1);
+  const reduced = useReducedMotion();
 
-  const subcategories = Array.from(
-    new Set(filteredArticles.map((a) => a.subcategory_name).filter(Boolean)),
-  ) as string[];
+  const subcategories =
+    categoryData?.subcategories?.map((s) => s.name) ??
+    Array.from(
+      new Set(articles.map((a) => a.subcategory_name).filter(Boolean)),
+    );
 
   useEffect(() => {
-    if (dbSlug) dispatch(fetchCategoryPage({ slug: dbSlug }));
-  }, [dispatch, dbSlug]);
+    if (!dbSlug) return;
+    dispatch(
+      fetchCategoryPage({
+        slug: dbSlug,
+        page,
+        subcategory: activeSubcategory ?? undefined,
+      }),
+    );
+  }, [dispatch, dbSlug, page, activeSubcategory]);
+
+  function handleSubcategoryChange(sub: string | null) {
+    setActiveSubcategory(sub);
+    setPage(1);
+  }
+
+  const categoryPath = urlSlug ? `/categoria/${urlSlug}` : "/";
+  const categoryDescription = `Últimas noticias de ${categoryName} en InteliNota. Mantente informado con los mejores artículos.`;
 
   return (
     <div className="pb-24">
       <MetaHead
         title={categoryName}
-        description={`Últimas noticias de ${categoryName} en InteliNota. Mantente informado con los mejores artículos.`}
+        description={categoryDescription}
+        canonical={canonicalUrl(categoryPath)}
         articleSection={categoryName}
+        jsonLd={mergeJsonLd(
+          buildCollectionPageJsonLd({
+            name: categoryName,
+            description: categoryDescription,
+            url: categoryPath,
+          }),
+          buildBreadcrumbJsonLd([
+            { name: "Inicio", path: "/" },
+            { name: categoryName, path: categoryPath },
+          ]),
+        )}
       />
-      {/* Category Header */}
-      <div className="bg-muted/30 border-b border-primary/5 mb-12">
-        <div className="container px-4 sm:px-6 lg:px-8 py-16 md:py-24">
-          <div className="space-y-4 max-w-4xl">
-            <div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.4em] text-primary italic">
-              Sección <ChevronRight className="h-3 w-3" /> {categoryName}
-            </div>
-            <h1 className="text-4xl sm:text-6xl md:text-8xl font-black italic tracking-tighter uppercase leading-[0.8] text-white">
-              {categoryName}
-            </h1>
-            <p className="text-xl text-muted-foreground font-medium max-w-2xl leading-relaxed italic">
-              Toda la actualidad, análisis profundos y las últimas novedades de{" "}
-              {categoryName.toLowerCase()} en un solo lugar.
-            </p>
-          </div>
-        </div>
-      </div>
+      {/* Section header */}
+      <header className="container px-4 pt-8 sm:px-6 sm:pt-12 lg:px-8">
+        <nav aria-label="Ruta" className="flex items-center gap-1.5 text-xs text-muted-foreground">
+          <Link to="/" className="hover:text-foreground">Portada</Link>
+          <ChevronRight className="h-3 w-3" />
+          <span className="kicker">{categoryName}</span>
+        </nav>
+        <h1 className="mt-3 border-b-2 border-rule pb-5 font-display text-display-xl font-bold">
+          {categoryName}
+        </h1>
+        <p className="mt-4 max-w-2xl font-body text-lg text-muted-foreground">
+          {categoryData?.description ||
+            `Toda la actualidad, análisis y las últimas novedades de ${categoryName.toLowerCase()}.`}
+        </p>
+      </header>
 
-      <div className="container px-4 sm:px-6 lg:px-8">
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-12">
-          {/* Main Content */}
-          <div className="lg:col-span-8 space-y-12">
-            {/* Filter Bar (Simplified) */}
-            <div className="flex flex-wrap items-center gap-3 border-b border-primary/5 pb-6">
-              <Button
-                variant="outline"
-                className="rounded-full px-6 font-black italic uppercase text-[10px] tracking-widest border-primary/20 bg-primary/5"
-              >
-                Todos
-              </Button>
-              {subcategories.map((sub) => (
-                <Button
-                  key={sub}
-                  variant="ghost"
-                  className="rounded-full px-6 font-black italic uppercase text-[10px] tracking-widest hover:bg-muted"
-                >
-                  {sub}
-                </Button>
-              ))}
-              <div className="ml-auto hidden md:flex items-center gap-2 text-[10px] font-black uppercase tracking-widest opacity-40">
-                <Filter className="h-3 w-3" /> Ordenar por fecha
-              </div>
-            </div>
-
-            {/* Articles Grid */}
-            {loading ? (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-12">
-                {[...Array(4)].map((_, i) => (
-                  <Skeleton key={i} className="h-72 rounded-[2.5rem]" />
-                ))}
-              </div>
-            ) : filteredArticles.length === 0 ? (
-              <div className="py-24 text-center space-y-4">
-                <h2 className="text-2xl font-black italic tracking-tighter uppercase opacity-30">
-                  No se encontraron artículos
-                </h2>
-                <p className="text-muted-foreground">
-                  Estamos trabajando para traerte las mejores noticias de esta
-                  categoría.
-                </p>
-                <Link to="/">
-                  <Button variant="outline" className="rounded-full mt-4">
-                    Volver al inicio
-                  </Button>
-                </Link>
-              </div>
-            ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-12">
-                {filteredArticles.map((article, idx) => (
-                  <Link
-                    key={article.id}
-                    to={`/articulo/${article.slug}`}
-                    className={cn(
-                      "group block space-y-4",
-                      idx === 0 &&
-                        "md:col-span-2 flex flex-col md:flex-row gap-8 space-y-0",
-                    )}
-                  >
-                    <div
+      <div className="container mt-8 px-4 sm:px-6 lg:px-8">
+        <div className="grid grid-cols-1 gap-12 lg:grid-cols-12">
+          <div className="space-y-10 lg:col-span-8">
+            {/* Subsection filter */}
+            <div className="-mx-4 overflow-x-auto px-4 sm:mx-0 sm:px-0">
+              <div role="tablist" aria-label="Subsecciones" className="flex min-w-max items-center gap-2 border-b pb-4">
+                {[null, ...subcategories].map((sub) => {
+                  const active = activeSubcategory === sub;
+                  return (
+                    <button
+                      key={sub ?? "all"}
+                      type="button"
+                      role="tab"
+                      aria-selected={active}
+                      onClick={() => handleSubcategoryChange(sub as string | null)}
                       className={cn(
-                        "aspect-[16/10] overflow-hidden rounded-[2.5rem] bg-muted relative border border-primary/5 shadow-2xl shadow-black/20 shrink-0",
-                        idx === 0 && "md:w-3/5",
+                        "inline-flex h-10 items-center rounded-full border px-4 text-sm font-medium transition-colors",
+                        active
+                          ? "border-foreground bg-foreground text-background"
+                          : "text-muted-foreground hover:border-foreground/50 hover:text-foreground",
                       )}
                     >
-                      <img
-                        src={article.image_url ?? "/placeholder.jpg"}
-                        alt={article.title}
-                        className="h-full w-full object-cover transition-transform duration-700 group-hover:scale-110"
-                      />
-                      <div className="absolute top-6 left-6">
-                        <Badge className="bg-black/80 text-white border-none backdrop-blur-md font-black italic uppercase text-[10px] tracking-[0.2em] px-4 py-1.5 rounded-full">
-                          {article.subcategory_name}
-                        </Badge>
-                      </div>
-                    </div>
-                    <div className="flex flex-col justify-center space-y-3">
-                      <div className="flex items-center gap-2 text-[10px] font-black text-primary uppercase tracking-[0.2em] italic">
-                        {article.published_at
-                          ? new Date(article.published_at).toLocaleDateString(
-                              "es-MX",
-                            )
-                          : ""}
-                        <span className="w-1 h-1 rounded-full bg-muted-foreground opacity-30" />
-                        {article.read_time_minutes} min
-                      </div>
-                      <h3
-                        className={cn(
-                          "font-black italic tracking-tighter leading-none uppercase group-hover:text-primary transition-colors",
-                          idx === 0 ? "text-3xl md:text-5xl" : "text-2xl",
-                        )}
-                      >
-                        {article.title}
-                      </h3>
-                      <p className="text-sm text-muted-foreground line-clamp-3 font-medium leading-relaxed">
-                        {article.excerpt}
-                      </p>
-                      {idx === 0 && (
-                        <div className="pt-4 flex items-center gap-2 text-[10px] font-black uppercase tracking-widest">
-                          Por{" "}
-                          <span className="text-foreground">
-                            {article.author_name}
-                          </span>
-                        </div>
-                      )}
-                    </div>
-                  </Link>
+                      {sub ?? "Todo"}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {error ? (
+              <Alert variant="destructive">
+                <AlertDescription>{error}</AlertDescription>
+              </Alert>
+            ) : loading ? (
+              <div className="grid grid-cols-1 gap-8 md:grid-cols-2">
+                {[...Array(4)].map((_, i) => (
+                  <div key={i} className="space-y-3">
+                    <Skeleton className="aspect-[3/2] w-full" />
+                    <Skeleton className="h-6 w-4/5" />
+                  </div>
                 ))}
               </div>
+            ) : articles.length === 0 ? (
+              <div className="py-20 text-center">
+                <h2 className="font-display text-2xl font-semibold">Aún no hay artículos aquí</h2>
+                <p className="mt-2 font-body text-muted-foreground">
+                  Estamos preparando las mejores historias de esta sección.
+                </p>
+                <Button asChild variant="outline" className="mt-6 h-11">
+                  <Link to="/">Volver a la portada</Link>
+                </Button>
+              </div>
+            ) : (
+              <AnimatePresence mode="wait">
+                <motion.div
+                  key={`${activeSubcategory ?? "all"}-${page}`}
+                  initial={reduced ? false : "hidden"}
+                  animate="visible"
+                  exit={reduced ? undefined : { opacity: 0, y: -8 }}
+                  variants={fadeIn}
+                  transition={{ duration: 0.25 }}
+                >
+                  <StaggerGrid className="grid grid-cols-1 gap-x-8 gap-y-10 md:grid-cols-2">
+                    {articles.map((article, idx) => (
+                      <StaggerItem
+                        key={article.id}
+                        className={idx === 0 ? "border-b pb-10 md:col-span-2" : undefined}
+                      >
+                        <ArticleCard
+                          article={article}
+                          variant={idx === 0 ? "featured" : "default"}
+                          priority={idx === 0 && page === 1}
+                        />
+                      </StaggerItem>
+                    ))}
+                  </StaggerGrid>
+                </motion.div>
+              </AnimatePresence>
+            )}
+
+            {pagination && pagination.totalPages > 1 && (
+              <nav aria-label="Paginación" className="flex items-center justify-between border-t pt-6">
+                <Button
+                  variant="outline"
+                  className="h-11"
+                  disabled={page <= 1 || loading}
+                  onClick={() => setPage((p) => Math.max(1, p - 1))}
+                >
+                  ← Anterior
+                </Button>
+                <span className="text-sm tabular-nums text-muted-foreground">
+                  {page} / {pagination.totalPages}
+                </span>
+                <Button
+                  variant="outline"
+                  className="h-11"
+                  disabled={page >= pagination.totalPages || loading}
+                  onClick={() => setPage((p) => p + 1)}
+                >
+                  Siguiente →
+                </Button>
+              </nav>
             )}
           </div>
 
-          {/* Sidebar */}
-          <aside className="lg:col-span-4 space-y-12">
-            <div className="bg-muted/30 p-8 rounded-[2.5rem] border border-primary/5 space-y-8 sticky top-24">
-              <div className="flex items-center gap-2 text-primary border-b border-primary/5 pb-4">
-                <TrendingUp className="h-5 w-5" />
-                <h3 className="text-xl font-black italic uppercase tracking-tighter">
-                  Más Leído
-                </h3>
-              </div>
-              <div className="space-y-8">
-                {topArticles.slice(0, 4).map((art, i) => (
-                  <Link
-                    key={art.id}
-                    to={`/articulo/${art.slug}`}
-                    className="group flex gap-4"
-                  >
-                    <span className="text-3xl font-black text-primary/10 italic shrink-0 group-hover:text-primary/30 transition-colors">
-                      0{i + 1}
-                    </span>
-                    <div className="space-y-1">
-                      <h4 className="font-bold uppercase tracking-tighter leading-tight text-sm group-hover:underline">
-                        {art.title}
-                      </h4>
-                      <div className="text-[10px] font-black uppercase tracking-widest text-primary italic opacity-60">
-                        {art.subcategory_name}
-                      </div>
-                    </div>
-                  </Link>
-                ))}
-              </div>
-
-              <div className="pt-8 border-t border-primary/5">
-                <div className="bg-primary p-6 rounded-3xl text-primary-foreground space-y-4 shadow-xl shadow-primary/20 overflow-hidden relative group">
-                  <div className="absolute -right-4 -top-4 w-24 h-24 bg-white/10 rounded-full blur-2xl group-hover:scale-150 transition-transform duration-1000" />
-                  <h4 className="text-lg font-black italic uppercase tracking-tighter leading-none relative z-10">
-                    Suscríbete a {categoryName}
-                  </h4>
-                  <p className="text-[10px] opacity-80 leading-relaxed font-medium relative z-10">
-                    Recibe alertas semanales con lo más relevante de este
-                    sector.
-                  </p>
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    className="w-full font-black italic uppercase tracking-tighter h-10 rounded-xl relative z-10 shadow-lg"
-                  >
-                    Únete ahora
-                  </Button>
-                </div>
-              </div>
+          <aside className="lg:col-span-4 lg:border-l lg:pl-8">
+            <div className="sticky top-24 space-y-10">
+              {topArticles.length > 0 && (
+                <section aria-labelledby="cat-top-h" className="rule-top pt-3">
+                  <h2 id="cat-top-h" className="mb-2 flex items-center gap-2 font-display text-xl font-bold">
+                    <TrendingUp className="h-5 w-5 text-brand" /> Más leído
+                  </h2>
+                  <ol>
+                    {topArticles.slice(0, 5).map((art, i) => (
+                      <li key={art.id} className="border-b last:border-0">
+                        <Link to={`/articulo/${art.slug}`} className="group flex gap-4 py-3.5">
+                          <span aria-hidden className="w-7 shrink-0 font-display text-3xl font-bold leading-none text-brand/80 tabular-nums">
+                            {i + 1}
+                          </span>
+                          <span className="font-display text-[15px] font-semibold leading-snug">
+                            <span className="headline-link">{art.title}</span>
+                          </span>
+                        </Link>
+                      </li>
+                    ))}
+                  </ol>
+                </section>
+              )}
+              <section className="bg-foreground p-6 text-background">
+                <p className="kicker !text-background/70">Boletín</p>
+                <p className="mt-2 font-display text-xl font-bold leading-tight">
+                  Lo mejor de {categoryName}, cada semana.
+                </p>
+                <NewsletterForm variant="inline" source={`category_${dbSlug}`} className="mt-4" />
+              </section>
             </div>
           </aside>
         </div>
