@@ -14,8 +14,14 @@ export interface ProcessedImage {
   sizeBytes: number;
 }
 
+function blobToken(): string | undefined {
+  const t = process.env.BLOB_READ_WRITE_TOKEN?.trim();
+  // `vercel env pull` writes "[SENSITIVE]" for sensitive vars — not a token
+  return t && t.startsWith("vercel_blob_rw_") ? t : undefined;
+}
+
 export function isBlobConfigured(): boolean {
-  return Boolean(process.env.BLOB_READ_WRITE_TOKEN);
+  return Boolean(blobToken());
 }
 
 /**
@@ -59,6 +65,9 @@ export async function processAndStoreImage(
         addRandomSuffix: false,
         allowOverwrite: true,
         cacheControlMaxAge: 31536000,
+        // Explicit token: otherwise the SDK prefers Vercel OIDC, which is only
+        // enabled for production and fails in local dev.
+        token: blobToken(),
       });
       return { width, url: blob.url };
     }),
