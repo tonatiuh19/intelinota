@@ -199,7 +199,7 @@ export default function Navbar() {
             <Link
               to="/favoritos"
               className="relative hidden h-10 w-10 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground sm:inline-flex"
-              aria-label={bookmarkCount > 0 ? `Favoritos (${bookmarkCount})` : "Favoritos"}
+              aria-label={bookmarkCount > 0 ? `Guardados (${bookmarkCount})` : "Guardados"}
             >
               <Bookmark className="h-5 w-5" />
               {bookmarkCount > 0 && (
@@ -272,7 +272,7 @@ export default function Navbar() {
                 onClick={() => setIsMenuOpen(false)}
               >
                 <Bookmark className="h-4 w-4" />
-                Favoritos
+                Guardados
                 {bookmarkCount > 0 && (
                   <span className="text-xs font-bold text-brand">({bookmarkCount})</span>
                 )}

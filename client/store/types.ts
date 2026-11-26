@@ -170,6 +170,14 @@ export interface AuthorsState {
   currentSlug: string | null;
 }
 
+export interface BookmarksState {
+  items: import("@shared/api").Article[];
+  loading: boolean;
+  error: string | null;
+  /** Sorted slug list last loaded (skip refetch when unchanged) */
+  loadedKey: string | null;
+}
+
 export interface SearchPageState {
   params: import("@shared/api").SearchParams | null;
   results: import("@shared/api").Article[];
@@ -260,6 +268,7 @@ export interface RootState {
   search: SearchState;
   tags: TagsState;
   searchPage: SearchPageState;
+  bookmarks: BookmarksState;
   revisions: RevisionsState;
   adminAudit: AdminAuditState;
 }
